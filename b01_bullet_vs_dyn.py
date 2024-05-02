@@ -64,7 +64,7 @@ if __name__ == "__main__":
     for i in range(step_num):
         ki = env.step(rpm, wind)
         print(f"simulated gps = {env.getSimulated_Gps()[0]}")
-        print(f"pos = {ki[0].pos}")
+        print(f"pos = {env.get_drones_kinematic_info()[0].pos}")
         rpm = np.array(get_gui_values())
         wind = get_gui_wind()
         # # Logger to store drone status (optional).

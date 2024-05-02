@@ -696,6 +696,15 @@ class DroneBltEnv(BulletEnv):
             gps_reading.append(pos)
         return gps_reading
 
+    def get_simulated_imu(self , noise_std_dev=0.1):
+        imu_reading = []
+        for i in range(self._num_drones):
+            orientation = self._kis[i].quat + np.random.normal(scale=noise_std_dev, size=4)
+            angular_velocity = self._kis[i].ang_vel + np.random.normal(scale=noise_std_dev, size=3)
+            linear_acceleration = self._kis[i].vel + np.random.normal(scale=noise_std_dev, size=3)
+            imu_reading.append( (orientation, angular_velocity, linear_acceleration) )
+        return imu_reading
+
 
 if __name__ == "__main__":
     '''
