@@ -95,6 +95,9 @@ class DroneBltEnv(BulletEnv):
         self._urdf_path = urdf_path
         self._physics_mode = phy_mode
         self._wind_direction = np.random.rand(3)
+        self._previous_linear_velocity = [0,0,0]
+
+
         self._dp = load_drone_properties(self._urdf_path, self._drone_type)
         print("--------------------------------------------------")
         self.printout_drone_properties()
@@ -192,6 +195,11 @@ class DroneBltEnv(BulletEnv):
     def get_wind_direction(self) -> int:
         return self._wind_direction
 
+    def get_new_wind(self,wind_power) -> List[int]:
+        wind_change = np.random.uniform(-0.1, 0.1, size=3)
+        self._wind_direction += wind_change
+        self._wind_direction /= np.linalg.norm(self._wind_direction)
+        return self._wind_direction * wind_power
     def get_last_rpm_values(self) -> np.ndarray:
         return self._last_rpm_values
 
@@ -243,6 +251,8 @@ class DroneBltEnv(BulletEnv):
                 bodyUniqueId=self._drone_ids[i],
                 physicsClientId=self._client,
             )
+            #after test make it to work with multi drones
+            self._previous_linear_velocity = self._kis[i].vel
             self._kis[i] = DroneKinematicsInfo(
                 pos=np.array(pos),
                 quat=np.array(quat),
@@ -404,6 +414,8 @@ class DroneBltEnv(BulletEnv):
         nth_drone : The ordinal number of the desired drone in list self._drone_ids.
         """
         assert len(rpm) == 4, f"The length of rpm_values must be 4. currently it is {len(rpm)}."
+        wind_direction_power =  self.get_new_wind(wind)
+
         forces = (np.array(rpm) ** 2) * self._dp.kf
         torques = (np.array(rpm) ** 2) * self._dp.km
         z_torque = (-torques[0] + torques[1] - torques[2] + torques[3])
@@ -419,7 +431,7 @@ class DroneBltEnv(BulletEnv):
         p.applyExternalForce(
             objectUniqueId=self._drone_ids[nth_drone],
             linkIndex=4,  # link id of the rotors.
-            forceObj=[wind, 0, 0],
+            forceObj=wind_direction_power,
             posObj=[0, 0, 0],
             flags=p.LINK_FRAME,
             physicsClientId=self._client,
@@ -695,12 +707,15 @@ class DroneBltEnv(BulletEnv):
             gps_reading.append(pos)
         return gps_reading
 
-    def get_simulated_imu(self , noise_std_dev=0.1):
+    def get_simulated_imu(self , noise_std_dev=0.01):
         imu_reading = []
+        time_step = 1/self.get_sim_freq()
         for i in range(self._num_drones):
             orientation = self._kis[i].quat + np.random.normal(scale=noise_std_dev, size=4)
             angular_velocity = self._kis[i].ang_vel + np.random.normal(scale=noise_std_dev, size=3)
+#            linear_acceleration = [(self._kis[i].vel[j] - self._previous_linear_velocity[j]) / time_step for j in range(3)] + np.random.normal(scale=noise_std_dev, size=3)
             linear_acceleration = self._kis[i].vel + np.random.normal(scale=noise_std_dev, size=3)
+
             imu_reading.append( (orientation, angular_velocity, linear_acceleration) )
         return imu_reading
 
