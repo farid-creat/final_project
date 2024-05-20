@@ -5,6 +5,7 @@ import numpy as np
 import pybullet as p
 
 from blt_env.wind_visualizer import WindVisualizer
+from blt_env.PatternGenerator import PatternGenerator
 
 from util.data_definition import DroneType, PhysicsType
 ####up
@@ -16,8 +17,8 @@ from util.data_logger import DroneDataLogger
 
 if __name__ == "__main__":
 
-    urdf_file = './assets/drone_p_01.urdf'
-    drone_type = DroneType.QUAD_PLUS
+    urdf_file = './assets/drone_x_01.urdf'
+    drone_type = DroneType.QUAD_X
 
     ## Select a pysical model.
     phy_mode = PhysicsType.PYB  # Dynamics computing by pybullet.
@@ -31,11 +32,13 @@ if __name__ == "__main__":
         phy_mode=phy_mode,
         init_xyzs=init_xyzx,
     )
+
     wind_visualizer = WindVisualizer()
     sim_freq = env.get_sim_freq()
     dp = env.get_drone_properties()
     max_rpm = dp.max_rpm
     hover_rpm = dp.hover_rpm
+    patter_generator = PatternGenerator(dp,env)
 
     rpm = hover_rpm * np.ones(4)
     wind = 0
@@ -66,10 +69,13 @@ if __name__ == "__main__":
     for i in range(step_num):
         start_time = time.time()
         wind_visualizer.update_wind_direction(env.get_wind_direction())
-        ki = env.step(rpm, wind)
-        print(f"simulated gps = {env.getSimulated_Gps()[0]}")
+        direction = "forward"  # Replace this with desired direction (e.g., "backward", "left", "right", "up", "down")
+        rpms = patter_generator.pattern_generator(direction)
+        new_rpm = patter_generator.adjust_orientation(rpms)
+        ki = env.step(np.array(new_rpm), wind)
+        #print(f"simulated gps = {env.getSimulated_Gps()[0]}")
         #print(f"pos = {env.get_drones_kinematic_info()[0].pos}")
-        print(f"simulated_IMU: = {env.get_simulated_imu()[0]}")
+        #print(f"simulated_IMU: = {env.get_simulated_imu()[0]}")
         rpm = np.array(get_gui_values())
         wind = get_gui_wind()
         # # Logger to store drone status (optional).

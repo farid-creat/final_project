@@ -430,7 +430,7 @@ class DroneBltEnv(BulletEnv):
             )
         p.applyExternalForce(
             objectUniqueId=self._drone_ids[nth_drone],
-            linkIndex=4,  # link id of the rotors.
+            linkIndex=4,  # link id of the center of mass.
             forceObj=wind_direction_power,
             posObj=[0, 0, 0],
             flags=p.LINK_FRAME,
