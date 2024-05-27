@@ -239,6 +239,8 @@ class DroneBltEnv(BulletEnv):
 
         # Reset measuring time.
         self._start_time = time.time()
+    def get_drone(self):
+        return self._drone_ids[0]
 
     def update_drones_kinematic_info(self):
         for i in range(self._num_drones):

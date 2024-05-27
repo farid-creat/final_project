@@ -1,9 +1,9 @@
 
 import time
-
+from typing import Optional, List, Tuple, Union
 import numpy as np
 import pybullet as p
-
+import pybullet_data
 from blt_env.wind_visualizer import WindVisualizer
 from blt_env.PatternGenerator import PatternGenerator
 
@@ -40,22 +40,42 @@ if __name__ == "__main__":
     hover_rpm = dp.hover_rpm
     patter_generator = PatternGenerator(dp,env)
 
-    rpm = hover_rpm * np.ones(4)
+    rpm = np.array([hover_rpm,hover_rpm,hover_rpm,hover_rpm])
     wind = 0
 
-    sld_r0 = p.addUserDebugParameter(f"rotor 0 rpm", 0, max_rpm, hover_rpm)
-    sld_r1 = p.addUserDebugParameter(f"rotor 1 rpm", 0, max_rpm, hover_rpm)
-    sld_r2 = p.addUserDebugParameter(f"rotor 2 rpm", 0, max_rpm, hover_rpm)
-    sld_r3 = p.addUserDebugParameter(f"rotor 3 rpm", 0, max_rpm, hover_rpm)
+    forward = p.addUserDebugParameter(f"forward", 0, 1, 0)
+    backward = p.addUserDebugParameter(f"backward", 0, 1, 0)
+    left = p.addUserDebugParameter(f"left", 0, 1, 0)
+    right = p.addUserDebugParameter(f"right", 0, 1, 0)
+    up = p.addUserDebugParameter(f"up", 0, 1, 0)
+    down = p.addUserDebugParameter(f"down", 0, 1, 0)
     wind_power = p.addUserDebugParameter(f"wind", -3, 3, 0)
+
+    def detect_direction(direction:List):
+        if direction[0] >=0.5:
+            return "forward"
+        elif direction[1] >=0.5:
+            return "backward"
+        elif direction[2] >=0.5:
+            return "left"
+        elif direction[3] >=0.5:
+            return "right"
+        elif direction[4] >=0.5:
+            return "up"
+        elif direction[5] >=0.5:
+            return "down"
+        return "hover"
+
 
 
     def get_gui_values():
-        r0 = p.readUserDebugParameter(int(sld_r0))
-        r1 = p.readUserDebugParameter(int(sld_r1))
-        r2 = p.readUserDebugParameter(int(sld_r2))
-        r3 = p.readUserDebugParameter(int(sld_r3))
-        return r0, r1, r2, r3
+        r0 = p.readUserDebugParameter(forward)
+        r1 = p.readUserDebugParameter(backward)
+        r2 = p.readUserDebugParameter(left)
+        r3 = p.readUserDebugParameter(right)
+        r4 = p.readUserDebugParameter(up)
+        r5 = p.readUserDebugParameter(down)
+        return r0, r1, r2, r3 ,r4 , r5
 
     def get_gui_wind():
         wind_P = p.readUserDebugParameter(int(wind_power))
@@ -69,15 +89,16 @@ if __name__ == "__main__":
     for i in range(step_num):
         start_time = time.time()
         wind_visualizer.update_wind_direction(env.get_wind_direction())
-        direction = "forward"  # Replace this with desired direction (e.g., "backward", "left", "right", "up", "down")
+        gui_values = np.array(get_gui_values())
+        direction = detect_direction(gui_values)
+        #direction = "left"  # Replace this with desired direction (e.g., "backward", "left", "right", "up", "down")
         rpms = patter_generator.pattern_generator(direction)
-        new_rpm = patter_generator.adjust_orientation(rpms)
-        ki = env.step(np.array(new_rpm), wind)
+        ki = env.step(np.array(rpms), wind)
         #print(f"simulated gps = {env.getSimulated_Gps()[0]}")
         #print(f"pos = {env.get_drones_kinematic_info()[0].pos}")
         #print(f"simulated_IMU: = {env.get_simulated_imu()[0]}")
-        rpm = np.array(get_gui_values())
         wind = get_gui_wind()
+
         # # Logger to store drone status (optional).
         # d_log.log(drone_id=0, time_stamp=(i / sim_freq), kin_state=ki[0], rpm_values=rpm)
         time_step = 1 / sim_freq
