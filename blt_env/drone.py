@@ -1,15 +1,6 @@
 import sys
 import os
 
-# Get the current script's directory path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# Get the parent directory of the script's directory
-parent_dir = os.path.abspath(os.path.join(script_dir, os.pardir))
-
-# Check if the parent directory is not already in the Python path
-if parent_dir not in sys.path:
-    sys.path.append(parent_dir)
 
 from typing import Optional, List, Tuple, Union
 import time
@@ -21,9 +12,17 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from blt_env.bullet_base import BulletEnv
 from util.data_definition import DroneProperties, DroneType, DroneKinematicsInfo, PhysicsType
 from util.file_tools import DroneUrdfAnalyzer
+
+import gym
+from gym import Env
+from gym.spaces import Box,Tuple
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.evaluation import evaluate_policy
+
+
 
 logger = getLogger(__name__)
 logger.addHandler(NullHandler())
@@ -63,7 +62,7 @@ def load_drone_properties(file_path: str, d_type: DroneType) -> DroneProperties:
     return file_analyzer.parse(file_path, int(d_type))
 
 
-class DroneBltEnv(BulletEnv):
+class DroneBltEnv(Env):
 
     def __init__(
             self,
@@ -90,7 +89,8 @@ class DroneBltEnv(BulletEnv):
         num_drones : Number of drones to be loaded.
         is_gui : Whether to start PyBullet in GUI mode.
         """
-        super().__init__(is_gui=is_gui)
+        #super().__init__(is_gui=is_gui)
+        self._is_gui = is_gui
         self._drone_type = d_type
         self._urdf_path = urdf_path
         self._physics_mode = phy_mode
@@ -99,9 +99,9 @@ class DroneBltEnv(BulletEnv):
 
 
         self._dp = load_drone_properties(self._urdf_path, self._drone_type)
-        print("--------------------------------------------------")
-        self.printout_drone_properties()
-        print("--------------------------------------------------")
+        #print("--------------------------------------------------")
+        #self.printout_drone_properties()
+        #print("--------------------------------------------------")
         # PyBullet simulation settings.
         self._num_drones = num_drones
         self._aggr_phy_steps = aggr_phy_steps
@@ -167,9 +167,19 @@ class DroneBltEnv(BulletEnv):
 
         # Update the information before running the simulations.
         self.update_drones_kinematic_info()
-
+        ###################################RL######################################
+        self.action_space = Box(low=0 , high=self._dp.max_rpm , shape=(1,4))
+        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32)
+        init_xyzs_as_list = init_xyzs[0].tolist()
+        print(f"-------------------------------\n{init_xyzs_as_list}")
+        target_pos = [init_xyzs_as_list[0] , init_xyzs_as_list[1] + 1, init_xyzs_as_list[2]]
+        self.state = target_pos + init_xyzs_as_list + [0,0,0]
+        self.proximity_threshold = 0.2
+        self.max_steps = 240 * 20
+        ###################################RL######################################
         # Start measuring time.
         self._start_time = time.time()
+        print("---------------------------------------------------\n init")
 
     def get_sim_time_step(self) -> float:
         return self._sim_time_step
@@ -239,6 +249,14 @@ class DroneBltEnv(BulletEnv):
 
         # Reset measuring time.
         self._start_time = time.time()
+
+
+        init_xyzs_as_list = self._init_xyzs[0,:].tolist()
+        target_pos = [init_xyzs_as_list[0] , init_xyzs_as_list[1] + 1, init_xyzs_as_list[2]]
+        self.state = target_pos + init_xyzs_as_list + [0,0,0]
+        self.proximity_threshold = 0.2
+        self.max_steps = 2000
+        return self.state
     def get_drone(self):
         return self._drone_ids[0]
 
@@ -267,12 +285,15 @@ class DroneBltEnv(BulletEnv):
         if p.isConnected() != 0:
             p.disconnect(physicsClientId=self._client)
 
-    def reset(self) -> None:
+    def reset(self) :
         if p.isConnected() != 0:
             p.resetSimulation(physicsClientId=self._client)
-            self.refresh_bullet_env()
+            return self.refresh_bullet_env()
+    def render(self):
+        print("rrrrrrrrrrrrennnnnnnndeeeeeeeeeeeeeer")
+        pass
 
-    def step(self, rpm_values: np.ndarray, wind: int) -> List[DroneKinematicsInfo]:
+    def step(self, rpm_values):
         """
         Parameters
         ----------
@@ -280,6 +301,8 @@ class DroneBltEnv(BulletEnv):
         rpm_values : Multiple arrays with 4 values as a pair of element.
                     Specify the rotational speed of the four rotors of each drone.
         """
+        wind = 0
+        start_time = time.time()
         rpm_values = self.check_values_for_rotors(rpm_values)
 
         for _ in range(self._aggr_phy_steps):
@@ -322,7 +345,29 @@ class DroneBltEnv(BulletEnv):
         if self._is_realtime_sim:
             real_time_step_synchronization(self._sim_counts, self._start_time, self._sim_time_step)
 
-        return self._kis
+        ####################################RL####################################
+        self.get_drones_kinematic_info()[0].pos
+        target_position = np.array(self.state[:3])
+        distance_to_target = np.linalg.norm( self.get_drones_kinematic_info()[0].pos - target_position)
+        reward = -(distance_to_target**10)
+
+        if self.get_drones_kinematic_info()[0].pos[2]<0.2:
+            reward -= (distance_to_target**30)
+            done =True
+        elif distance_to_target < self.proximity_threshold:
+            done = True
+        elif self._sim_counts >= self.max_steps:  # Check maximum number of steps
+            done = True
+        else:
+            done = False
+        info ={'pos':self.get_drones_kinematic_info()[0].pos , 'reward':reward ,'rpm_values':rpm_values}
+        print("------------------------------------\n",info)
+        ####################################RL####################################
+        time_step = 1 / self._sim_freq
+        elapsed_time = time.time() - start_time
+        sleep_time = max(0, time_step - elapsed_time)
+        time.sleep(sleep_time)
+        return self.state , reward , done , info
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:
         """

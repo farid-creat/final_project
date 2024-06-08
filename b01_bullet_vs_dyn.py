@@ -1,4 +1,4 @@
-
+import os.path
 import time
 from typing import Optional, List, Tuple, Union
 import numpy as np
@@ -8,11 +8,16 @@ from blt_env.wind_visualizer import WindVisualizer
 from blt_env.PatternGenerator import PatternGenerator
 
 from util.data_definition import DroneType, PhysicsType
-####up
+
 from blt_env.drone import DroneBltEnv
 
-# Logger class to store drone status (optional).
-from util.data_logger import DroneDataLogger
+
+import gym
+from gym import Env
+from gym.spaces import Box,Tuple
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.evaluation import evaluate_policy
 
 
 if __name__ == "__main__":
@@ -32,7 +37,27 @@ if __name__ == "__main__":
         phy_mode=phy_mode,
         init_xyzs=init_xyzx,
     )
+    ###################################RL##################################
+    log_path = os.path.join('Training', 'Logs')
+    model = PPO('MlpPolicy', env, verbose=1, tensorboard_log=log_path)
 
+    # Add debugging to check for NaN values in observations
+    obs = env.reset()
+    print("--------------------------------------\nObservation before training:", obs)
+    print("Any NaN values in observations:", np.any(np.isnan(obs)))
+
+    # Train the model
+    model.learn(total_timesteps=4000)
+
+    # Save the trained model
+    drone_path = os.path.join('Training', 'saved_Models', 'drone_model_PPO')
+    model.save(drone_path)
+    ###################################RL##################################
+
+    # Close the environment after training
+    env.close()
+
+    """
     wind_visualizer = WindVisualizer()
     sim_freq = env.get_sim_freq()
     dp = env.get_drone_properties()
@@ -86,6 +111,7 @@ if __name__ == "__main__":
     # d_log = DroneDataLogger(num_drones=1, logging_freq=sim_freq, logging_duration=0, )
 
     step_num = 240 * 30
+
     for i in range(step_num):
         start_time = time.time()
         wind_visualizer.update_wind_direction(env.get_wind_direction())
@@ -110,4 +136,5 @@ if __name__ == "__main__":
 
     # # Logger to store drone status (optional).
     # d_log.plot()
+    """
 
