@@ -293,7 +293,7 @@ class DroneBltEnv(Env):
         print("rrrrrrrrrrrrennnnnnnndeeeeeeeeeeeeeer")
         pass
 
-    def step(self, rpm_values):
+    def step(self, rpm_values , wind = 0):
         """
         Parameters
         ----------
@@ -301,7 +301,7 @@ class DroneBltEnv(Env):
         rpm_values : Multiple arrays with 4 values as a pair of element.
                     Specify the rotational speed of the four rotors of each drone.
         """
-        wind = 0
+
         start_time = time.time()
         rpm_values = self.check_values_for_rotors(rpm_values)
 
@@ -344,30 +344,11 @@ class DroneBltEnv(Env):
         # Synchronize the step interval with real time.
         if self._is_realtime_sim:
             real_time_step_synchronization(self._sim_counts, self._start_time, self._sim_time_step)
-
-        ####################################RL####################################
-        self.get_drones_kinematic_info()[0].pos
-        target_position = np.array(self.state[:3])
-        distance_to_target = np.linalg.norm( self.get_drones_kinematic_info()[0].pos - target_position)
-        reward = -(distance_to_target**10)
-
-        if self.get_drones_kinematic_info()[0].pos[2]<0.2:
-            reward -= (distance_to_target**30)
-            done =True
-        elif distance_to_target < self.proximity_threshold:
-            done = True
-        elif self._sim_counts >= self.max_steps:  # Check maximum number of steps
-            done = True
-        else:
-            done = False
-        info ={'pos':self.get_drones_kinematic_info()[0].pos , 'reward':reward ,'rpm_values':rpm_values}
-        print("------------------------------------\n",info)
-        ####################################RL####################################
         time_step = 1 / self._sim_freq
         elapsed_time = time.time() - start_time
         sleep_time = max(0, time_step - elapsed_time)
         time.sleep(sleep_time)
-        return self.state , reward , done , info
+        return self.state
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:
         """

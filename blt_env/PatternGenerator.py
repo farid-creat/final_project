@@ -19,118 +19,94 @@ class PIDController:
     def reset_integral(self):
         self.integral = 0
         self.prev_error = 0
-
 class PatternGenerator:
     def __init__(self, drone_properties, env):
         self.dp = drone_properties
         self.env = env
         self.hover_rpm = drone_properties.hover_rpm
         self.max_rpm = drone_properties.max_rpm
-        self.yaw_pid = PIDController(Kp=400, Ki=200, Kd=400)
-        self.roll_pid = PIDController(Kp=400, Ki=200, Kd=400)
-        self.pitch_pid = PIDController(Kp=400, Ki=200, Kd=400)
-        self.height_pid = PIDController(Kp=40000, Ki=2000, Kd=40000)
-        self.prev_direction="hover"
+        # Constants
+        self.mass = self.dp.m  # kg
+        self.gravity = 9.81  # m/s^2
+        self.L = self.dp.l  # m (distance from the center of the drone to each motor)
+        self.k_f = self.dp.kf  # N/(rad/s)^2 (thrust coefficient)
+        self.k_m = self.dp.km  # Nm/(rad/s)^2 (torque coefficient)
 
-    def pattern_generator(self, direction):
-        if direction == "forward":
-            return self.forward()
-        elif direction == "backward":
-            return self.backward()
-        elif direction == "left":
-            return self.left()
-        elif direction == "right":
-            return self.right()
-        elif direction == "up":
-            return self.up()
-        elif direction == "down":
-            return self.down()
-        else:
-            return self.hover()
+        # P controller gains
+        self.k_p = 0.1  # Proportional gain for position
+        self.k_p_phi = 0.05  # Proportional gain for roll
+        self.k_p_theta = 0.05  # Proportional gain for pitch
+        self.k_p_psi = 0.05  # Proportional gain for yaw
 
-    def hover(self):
-        # Reset PID controllers' integrals
-        if self.prev_direction !="hover":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-            self.height_pid.reset_integral()
-        self.prev_direction = "hover"
-        return self.adjust_orientation(self.hover_rpm,0,0,0,1.5)
+    def controller(self, target_pos):
+        # Desired state
+        x_d, y_d, z_d = target_pos
+        phi_d, theta_d, psi_d = 0.0, 0.0, 0.0
 
-    def forward(self):
-        if self.prev_direction != "forward":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "forward"
-        return self.adjust_orientation(self.hover_rpm,-0.5,0,0,1.5)
+        # Current state
+        current_state = self.env.get_drones_kinematic_info()[0]
+        x, y, z = current_state.pos
+        phi, theta, psi = current_state.rpy
 
-    def backward(self):
-        if self.prev_direction != "backward":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "backward"
-        return self.adjust_orientation(self.hover_rpm,0.5,0,0,1.5)
+        # Position errors
+        e_x = x_d - x
+        e_y = y_d - y
+        e_z = z_d - z
+        print(f"------------------------------------\nPosition errors: e_x = {e_x}, e_y = {e_y}, e_z = {e_z}")
 
-    def left(self):
-        if self.prev_direction != "left":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "left"
-        return self.adjust_orientation(self.hover_rpm,0,-0.5,0,1.5)
+        # Desired forces
+        F_x = self.k_p * e_x
+        F_y = self.k_p * e_y
+        F_z = self.k_p * e_z
+        print(f"Desired forces: F_x = {F_x}, F_y = {F_y}, F_z = {F_z}")
 
-    def right(self):
-        if self.prev_direction != "right":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "right"
-        return self.adjust_orientation(self.hover_rpm,0,0.5,0,1.5)
+        # Calculate desired roll and pitch angles using small-angle approximations
+        phi_d = np.arctan2(min(F_y,self.mass*self.gravity), self.mass*self.gravity)
+        theta_d = np.arctan2(min(F_x,self.mass*self.gravity), self.mass*self.gravity)
+        print(f"Desired angles: phi_d = {phi_d}, theta_d = {theta_d}")
 
-    def up(self):
-        if self.prev_direction != "up":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "up"
-        return self.adjust_orientation(self.hover_rpm,0,0,0,1.5)
+        # Orientation errors
+        e_phi = phi_d - phi
+        e_theta = theta_d - theta
+        e_psi = psi_d - psi
+        print(f"Orientation errors: e_phi = {e_phi}, e_theta = {e_theta}, e_psi = {e_psi}")
 
-    def down(self):
-        if self.prev_direction != "down":
-            self.roll_pid.reset_integral()
-            self.pitch_pid.reset_integral()
-            self.yaw_pid.reset_integral()
-        self.prev_direction = "down"
-        return self.adjust_orientation(self.hover_rpm,0,0,0,1.5)
+        # Desired torques
+        tau_phi = self.k_p_phi * e_phi
+        tau_theta = self.k_p_theta * e_theta
+        tau_psi = self.k_p_psi * e_psi
+        print(f"Desired torques: tau_phi = {tau_phi}, tau_theta = {tau_theta}, tau_psi = {tau_psi}")
 
-    def adjust_orientation(self, base_rpms , desired_roll , desired_pitch , desired_yaw , desired_height):
-        dt = 1 / self.env.get_sim_freq()
+        # Calculate individual thrusts
+        T1 = F_z  - tau_theta / (2 * self.L) - tau_psi / (4 * self.k_m)
+        T2 = F_z  - tau_phi / (2 * self.L) + tau_psi / (4 * self.k_m)
+        T3 = F_z  + tau_theta / (2 * self.L) - tau_psi / (4 * self.k_m)
+        T4 = F_z  + tau_phi / (2 * self.L) + tau_psi / (4 * self.k_m)
+        print(f"T1: {T1} , T2: {T2} ,T3: {T3} ,T4: {T4} ")
 
-        # Get current orientations
-        current_roll, current_pitch, current_yaw = self.env.get_drones_kinematic_info()[0].rpy
-        current_height = self.env.get_drones_kinematic_info()[0].pos[2]
+        # Ensure thrusts are positive and within limits
+        T1 = max(T1, 0)
+        T2 = max(T2, 0)
+        T3 = max(T3, 0)
+        T4 = max(T4, 0)
 
-        print(f"current_roll = {current_roll} \ncurrent_pitch = {current_pitch}\ncurrent_yaw = {current_yaw}")
+        # Convert thrust to angular velocities using k_f
+        omega_1 =self.hover_rpm+ np.sqrt(T1 / self.k_f)
+        omega_2 =self.hover_rpm+ np.sqrt(T2 / self.k_f)
+        omega_3 =self.hover_rpm+ np.sqrt(T3 / self.k_f)
+        omega_4 =self.hover_rpm+ np.sqrt(T4 / self.k_f)
 
-        # Compute PID corrections
-        roll_adjustment = self.roll_pid.update(desired_roll, current_roll, dt)
-        pitch_adjustment = self.pitch_pid.update(desired_pitch, current_pitch, dt)
-        yaw_adjustment = self.yaw_pid.update(desired_yaw, current_yaw, dt)
-        height_adjustment = self.height_pid.update(desired_height, current_height, dt)
-        print(f"----------------------\nheight = {current_height}\nheight_adjustment = {height_adjustment}")
+        # Convert angular velocities to RPM
+        RPM_1 = omega_1 #* 60 / (2 * np.pi)
+        RPM_2 = omega_2 #* 60 / (2 * np.pi)
+        RPM_3 = omega_3 #* 60 / (2 * np.pi)
+        RPM_4 = omega_4 #* 60 / (2 * np.pi)
 
-        rpms = (base_rpms +height_adjustment) + np.array([
-            +roll_adjustment - pitch_adjustment + yaw_adjustment,  # Front Left (Rotor 1 / Link 0)
-            +roll_adjustment + pitch_adjustment - yaw_adjustment,  # Rear Left (Rotor 2 / Link 1)
-            -roll_adjustment + pitch_adjustment + yaw_adjustment,  # Rear Right (Rotor 3 / Link 2)
-            -roll_adjustment - pitch_adjustment - yaw_adjustment  # Front Right (Rotor 4 / Link 3)
+        rpms = np.array([
+            RPM_2,  # Front Left (Rotor 1 / Link 0)
+            RPM_3,  # Rear Left (Rotor 2 / Link 1)
+            RPM_4,  # Rear Right (Rotor 3 / Link 2)
+            RPM_1   # Front Right (Rotor 4 / Link 3)
         ])
-
-
-        # Log the corrections for debugging
-        #print(f"Roll Correction: {roll_adjustment}\n, Pitch Correction: {pitch_adjustment}\n, Yaw Correction: {yaw_adjustment}\n")
-
-        return np.clip(rpms, 0, self.max_rpm)
+        print(f"RPMs: \n{rpms}")
+        return rpms

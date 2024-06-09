@@ -37,33 +37,13 @@ if __name__ == "__main__":
         phy_mode=phy_mode,
         init_xyzs=init_xyzx,
     )
-    ###################################RL##################################
-    log_path = os.path.join('Training', 'Logs')
-    model = PPO('MlpPolicy', env, verbose=1, tensorboard_log=log_path)
 
-    # Add debugging to check for NaN values in observations
-    obs = env.reset()
-    print("--------------------------------------\nObservation before training:", obs)
-    print("Any NaN values in observations:", np.any(np.isnan(obs)))
-
-    # Train the model
-    model.learn(total_timesteps=4000)
-
-    # Save the trained model
-    drone_path = os.path.join('Training', 'saved_Models', 'drone_model_PPO')
-    model.save(drone_path)
-    ###################################RL##################################
-
-    # Close the environment after training
-    env.close()
-
-    """
     wind_visualizer = WindVisualizer()
     sim_freq = env.get_sim_freq()
     dp = env.get_drone_properties()
     max_rpm = dp.max_rpm
     hover_rpm = dp.hover_rpm
-    patter_generator = PatternGenerator(dp,env)
+    patter_generator = PatternGenerator(dp , env)
 
     rpm = np.array([hover_rpm,hover_rpm,hover_rpm,hover_rpm])
     wind = 0
@@ -75,21 +55,6 @@ if __name__ == "__main__":
     up = p.addUserDebugParameter(f"up", 0, 1, 0)
     down = p.addUserDebugParameter(f"down", 0, 1, 0)
     wind_power = p.addUserDebugParameter(f"wind", -3, 3, 0)
-
-    def detect_direction(direction:List):
-        if direction[0] >=0.5:
-            return "forward"
-        elif direction[1] >=0.5:
-            return "backward"
-        elif direction[2] >=0.5:
-            return "left"
-        elif direction[3] >=0.5:
-            return "right"
-        elif direction[4] >=0.5:
-            return "up"
-        elif direction[5] >=0.5:
-            return "down"
-        return "hover"
 
 
 
@@ -111,18 +76,14 @@ if __name__ == "__main__":
     # d_log = DroneDataLogger(num_drones=1, logging_freq=sim_freq, logging_duration=0, )
 
     step_num = 240 * 30
-
+    target_pos = [0,1,1.5]
     for i in range(step_num):
         start_time = time.time()
         wind_visualizer.update_wind_direction(env.get_wind_direction())
         gui_values = np.array(get_gui_values())
-        direction = detect_direction(gui_values)
-        #direction = "left"  # Replace this with desired direction (e.g., "backward", "left", "right", "up", "down")
-        rpms = patter_generator.pattern_generator(direction)
+        rpms = patter_generator.controller(target_pos)
         ki = env.step(np.array(rpms), wind)
-        #print(f"simulated gps = {env.getSimulated_Gps()[0]}")
-        #print(f"pos = {env.get_drones_kinematic_info()[0].pos}")
-        #print(f"simulated_IMU: = {env.get_simulated_imu()[0]}")
+
         wind = get_gui_wind()
 
         # # Logger to store drone status (optional).
@@ -136,5 +97,7 @@ if __name__ == "__main__":
 
     # # Logger to store drone status (optional).
     # d_log.plot()
-    """
 
+# print(f"simulated gps = {env.getSimulated_Gps()[0]}")
+# print(f"pos = {env.get_drones_kinematic_info()[0].pos}")
+# print(f"simulated_IMU: = {env.get_simulated_imu()[0]}")
