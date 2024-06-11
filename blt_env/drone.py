@@ -168,14 +168,7 @@ class DroneBltEnv(Env):
         # Update the information before running the simulations.
         self.update_drones_kinematic_info()
         ###################################RL######################################
-        self.action_space = Box(low=0 , high=self._dp.max_rpm , shape=(1,4))
-        self.observation_space = Box(low=-np.inf, high=np.inf, shape=(9,), dtype=np.float32)
-        init_xyzs_as_list = init_xyzs[0].tolist()
-        print(f"-------------------------------\n{init_xyzs_as_list}")
-        target_pos = [init_xyzs_as_list[0] , init_xyzs_as_list[1] + 1, init_xyzs_as_list[2]]
-        self.state = target_pos + init_xyzs_as_list + [0,0,0]
-        self.proximity_threshold = 0.2
-        self.max_steps = 240 * 20
+
         ###################################RL######################################
         # Start measuring time.
         self._start_time = time.time()
@@ -348,7 +341,7 @@ class DroneBltEnv(Env):
         elapsed_time = time.time() - start_time
         sleep_time = max(0, time_step - elapsed_time)
         time.sleep(sleep_time)
-        return self.state
+        return self._kis
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:
         """
