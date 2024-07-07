@@ -39,11 +39,15 @@ class DSLPIDControl():
 
         # PID constant parameters
         self._PID = pid_coeff
-
         self._time_step = env.get_sim_time_step()
         self._dp = env.get_drone_properties()
         self._g = self._dp.g
         self._mass = self._dp.m
+        ########use for sustainability##########
+        self.max_rpms = self._dp.max_rpm
+        #############################
+
+
         self._kf = self._dp.kf
         self._km = self._dp.km
         self._Mixer = np.array([[.5, -.5, -1], [.5, .5, 1], [-.5, .5, -1], [-.5, -.5, 1]])#np.array([[0, -1, -1], [+1, 0, 1], [0, 1, -1], [-1, 0, 1]])
@@ -149,7 +153,7 @@ class DSLPIDControl():
         cur_rotation = np.array(p.getMatrixFromQuaternion(current_quaternion)).reshape(3, 3)
         pos_e = target_position - current_position
         vel_e = target_velocity - current_velocity
-
+        pos_e = np.clip(pos_e, -2., 2.)
         self._integral_pos_e = self._integral_pos_e + pos_e * control_timestep
         self._integral_pos_e = np.clip(self._integral_pos_e, -2., 2.)
         self._integral_pos_e[2] = np.clip(self._integral_pos_e[2], -0.15, 0.15)
@@ -202,9 +206,10 @@ class DSLPIDControl():
         target_torques = - np.multiply(self._PID.P_tor, rot_e) \
                          + np.multiply(self._PID.D_tor, rpy_rates_e) \
                          + np.multiply(self._PID.I_tor, self._integral_rpy_e)
-        print(f"\ntarget_torques\n : {target_torques}")
 
-        target_torques = np.clip(target_torques, -3200, 3200)
+
+        #target_torques = np.clip(target_torques, -3200, 3200)
+        #print(f"\ntarget_torques\n : {target_torques}")
         omegas = thrust + np.dot(self._Mixer, target_torques)#self._Mixer = np.array([[.5, -.5, -1], [.5, .5, 1], [-.5, .5, -1], [-.5, -.5, 1]])
-        #pwm = np.clip(pwm, self._min_pwm, self._max_pwm)
+        omegas = np.clip(omegas, 0 , self.max_rpms)
         return  omegas

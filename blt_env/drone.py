@@ -75,6 +75,7 @@ class DroneBltEnv(Env):
             is_gui: bool = True,
             is_real_time_sim: bool = False,
             init_xyzs: Optional[Union[List, np.ndarray]] = None,
+            init_target = None,
             init_rpys: Optional[Union[List, np.ndarray]] = None,
     ):
         """
@@ -96,7 +97,16 @@ class DroneBltEnv(Env):
         self._physics_mode = phy_mode
         self._wind_direction = np.random.rand(3)
         self._previous_linear_velocity = [0,0,0]
+        ###############################RL###########################
+        self.init_target = init_target
+        self.near_to_target_time = 0
+        self.near_to_target_threshold_time = 5
+        self.distance_threshold = 2
+        self.episode_threshold = 30
 
+
+
+        ################################RL###########################
 
         self._dp = load_drone_properties(self._urdf_path, self._drone_type)
         #print("--------------------------------------------------")
@@ -174,6 +184,9 @@ class DroneBltEnv(Env):
         self._start_time = time.time()
         print("---------------------------------------------------\n init")
 
+    def get_target(self):
+        return self.init_target
+
     def get_sim_time_step(self) -> float:
         return self._sim_time_step
 
@@ -206,13 +219,34 @@ class DroneBltEnv(Env):
     def get_last_rpm_values(self) -> np.ndarray:
         return self._last_rpm_values
 
+    def make_random_pos(self):
+        x_init = random.uniform(-10, 10)
+        y_init = random.uniform(-10, 10)
+        z_init = random.uniform(0, 10)
+
+        x_target = random.uniform(-10, 10)
+        y_target = random.uniform(-10, 10)
+        z_target = random.uniform(0, 10)
+
+        point1 = np.array([x_init, y_init, z_init])
+        point2 = np.array([x_target, y_target, z_target])
+        distance = np.linalg.norm(point1 - point2)
+
+        while (distance < 1):
+            x_target = random.uniform(-10, 10)
+            y_target = random.uniform(-10, 10)
+            z_target = random.uniform(0, 10)
+            point2 = np.array([x_target, y_target, z_target])
+            distance = np.linalg.norm(point1 - point2)
+        point1 = np.array([[x_init, y_init, z_init]])
+        return point1, point2
+
     def refresh_bullet_env(self):
+        start_pos , target =  self.make_random_pos()
         """
         Refresh the PyBullet simulation environment.
         Allocation and zero-ing of the variables and PyBullet's parameters/objects
         in the `self.reset()` function.
-
-        PyBulletのシミュレーション環境を初期化する
 
         """
         self._sim_counts = 0
@@ -234,7 +268,7 @@ class DroneBltEnv(Env):
         self._drone_ids = np.array([
             p.loadURDF(
                 self._urdf_path,
-                self._init_xyzs[i, :],
+                start_pos[0, :],
                 p.getQuaternionFromEuler(self._init_rpys[i, :]),
             ) for i in range(self._num_drones)])
 
@@ -242,14 +276,12 @@ class DroneBltEnv(Env):
 
         # Reset measuring time.
         self._start_time = time.time()
-
-
-        init_xyzs_as_list = self._init_xyzs[0,:].tolist()
-        target_pos = [init_xyzs_as_list[0] , init_xyzs_as_list[1] + 1, init_xyzs_as_list[2]]
-        self.state = target_pos + init_xyzs_as_list + [0,0,0]
-        self.proximity_threshold = 0.2
-        self.max_steps = 2000
-        return self.state
+        #########################RL#######################
+        self.init_target = target
+        self.near_to_target_time = 0
+        new_state = np.concatenate([self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel ,self.init_target ,np.array([self.near_to_target_time]) ])
+        #################################################
+        return new_state
     def get_drone(self):
         return self._drone_ids[0]
 
@@ -282,9 +314,6 @@ class DroneBltEnv(Env):
         if p.isConnected() != 0:
             p.resetSimulation(physicsClientId=self._client)
             return self.refresh_bullet_env()
-    def render(self):
-        print("rrrrrrrrrrrrennnnnnnndeeeeeeeeeeeeeer")
-        pass
 
     def step(self, rpm_values , wind = 0):
         """
@@ -294,8 +323,6 @@ class DroneBltEnv(Env):
         rpm_values : Multiple arrays with 4 values as a pair of element.
                     Specify the rotational speed of the four rotors of each drone.
         """
-
-        start_time = time.time()
         rpm_values = self.check_values_for_rotors(rpm_values)
 
         for _ in range(self._aggr_phy_steps):
@@ -338,17 +365,33 @@ class DroneBltEnv(Env):
         if self._is_realtime_sim:
             real_time_step_synchronization(self._sim_counts, self._start_time, self._sim_time_step)
         time_step = 1 / self._sim_freq
-        elapsed_time = time.time() - start_time
-        sleep_time = max(0, time_step - elapsed_time)
-        time.sleep(sleep_time)
-        return self._kis
+
+        #########################RL#######################
+        new_state = np.concatenate([self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel ,self.init_target ,np.array([self.near_to_target_time]) ])
+        distance = np.linalg.norm(self._kis[0].pos - self.init_target)
+        reward = -(distance**5)
+        done = False
+        # Check if the roll angle is approximately ±180 degrees (±π radians)
+        if (np.abs(self._kis[0].rpy[0]) > np.pi / 2 or np.abs(self._kis[0].rpy[1]) > np.pi / 2) and self._kis[0].pos[2]<0.1:##upside down on the land
+            reward = -(distance+2)**10
+            done =True
+        if distance <= self.distance_threshold:
+            self.near_to_target_time+=time_step
+        else:
+            self.near_to_target_time = 0# should stay near to target constantly
+        if self.near_to_target_time>self.near_to_target_threshold_time:
+            done = True
+        if self._sim_counts * time_step > self.episode_threshold:
+            done = True
+        #################################################
+
+        return new_state, reward, done , self._kis
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:
         """
         Check that 'rpm_values', which specifies the rotation speed of the 4-rotors, are in the proper form.
         Also, if possible, modify 'rpm_values' to the appropriate form.
 
-        各ドローンの４つのロータ回転数を指定するnp.ndarrayが、適切な形式になっているか確認する
 
         Parameters and Returns
         ----------
@@ -468,10 +511,6 @@ class DroneBltEnv(Env):
     def apply_ground_effect(self, rpm: np.ndarray, nth_drone: int):
         """
         Apply ground effect.
-
-        This is a reference from the following ...
-
-            https://github.com/utiasDSL/gym-pybullet-drones/blob/master/gym_pybullet_drones/envs/BaseAviary.py
 
             Inspired by the analytical model used for comparison in (Shi et al., 2019).
 

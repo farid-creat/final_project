@@ -86,6 +86,7 @@ if __name__ == "__main__":
                 pos=np.array([tg_x, tg_y, tg_z]),
             ),
         )
+        print(rpms)
         if np.linalg.norm(pos_e)<=0.09:
             j+=1
         if j>=15:
