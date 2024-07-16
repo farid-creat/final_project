@@ -97,18 +97,21 @@ class DroneBltEnv(Env):
         self._physics_mode = phy_mode
         self._wind_direction = np.random.rand(3)
         self._previous_linear_velocity = [0,0,0]
+        self._dp = load_drone_properties(self._urdf_path, self._drone_type)
         ###############################RL###########################
         self.init_target = init_target
         self.near_to_target_time = 0
         self.near_to_target_threshold_time = 5
         self.distance_threshold = 2
         self.episode_threshold = 30
-
+        self.near_ground_time = 0
+        self.near_ground_time_threshold = 0
+        self.max_action = self._dp.max_rpm
 
 
         ################################RL###########################
 
-        self._dp = load_drone_properties(self._urdf_path, self._drone_type)
+
         #print("--------------------------------------------------")
         #self.printout_drone_properties()
         #print("--------------------------------------------------")
@@ -383,6 +386,14 @@ class DroneBltEnv(Env):
             done = True
         if self._sim_counts * time_step > self.episode_threshold:
             done = True
+        if self._kis[0].pos[2]<0.1:
+            self.near_ground_time+=time_step
+        else:
+            self.near_ground_time = 0
+        if self.near_ground_time> self.near_ground_time_threshold:
+            done = True;
+            reward = -(distance+2)**10
+
         #################################################
 
         return new_state, reward, done , self._kis

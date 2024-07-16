@@ -3,11 +3,11 @@ import matplotlib
 matplotlib.use('Agg')
 import numpy as np
 import pybullet as p
-
+from RL.Memory import Memory
 from util.data_definition import DroneType, PhysicsType
 from util.data_definition import DroneForcePIDCoefficients, DroneControlTarget
 from blt_env.drone import DroneBltEnv
-
+from RL.Normalization import NormalizedEnv
 from control.drone_ctrl import DSLPIDControl
 import random
 
@@ -67,20 +67,29 @@ if __name__ == "__main__":
         I_tor=np.array([.0, .0, 500.]),
         D_tor=np.array([20000., 20000., 12000.]),
     )
-
+    number_of_saved_data=1
     ctrl = DSLPIDControl(env, pid_coeff=pid)
-
+    sample_number = 100000
     rpms = np.array([14300, 14300, 14300, 14300])
-
-    # Initial target position
-    pos = np.array([0, 0, 1.0])
-
-    eposides = 500
+    memory = Memory(sample_number)
+    normalizedEnv = NormalizedEnv(0,env.max_action)
+    eposides = 1000
     for j in range(eposides):
+        if number_of_saved_data==51:
+            break
         state = env.reset()
+
+        if j%100 ==0:
+            print(f"episode {j}")
+        if memory.size==sample_number:
+            memory.save(f"replay_buffer_data{number_of_saved_data}.pkl")
+            memory.size=0;
+            print(f"saved replay_buffer_data{number_of_saved_data}.pkl")
+            number_of_saved_data+=1
         for i in range(200000):
             new_state , reward , done ,kis = env.step(rpms)
-
+            rpms_normalized = normalizedEnv.Normalized_action(rpms)
+            memory.push(state,rpms_normalized,reward , new_state , done)
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=kis[0],
@@ -93,5 +102,5 @@ if __name__ == "__main__":
                 break
 
     # Close the environment
-    env.close()
+env.close()
 

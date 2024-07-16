@@ -1,7 +1,7 @@
 import random
 from collections import deque
 import pickle
-
+import numpy as np
 class Memory:
     def __init__(self , max_size):
         self.max_size = max_size
@@ -13,20 +13,17 @@ class Memory:
         if self.size<self.max_size:
             self.size+=1
     def sample (self, batch_size):
-        state_batch = []
-        reward_batch = []
-        action_batch = []
-        next_state_batch = []
-        done_batch = []
-        batch = random.sample(self.buffer , batch_size)
-        for ex in batch:
-            state, action, reward, next_state, done = ex
-            state_batch.append(state)
-            reward_batch.append(reward)
-            action_batch.append(action)
-            next_state_batch(next_state)
-            done_batch.append(done)
-        return state_batch,action_batch,reward_batch,next_state_batch,done_batch
+        actual_size = min(batch_size ,self.size)
+        batch = random.sample(self.buffer, actual_size)
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*batch)
+
+        state_batch = np.array(state_batch)
+        action_batch = np.array(action_batch)
+        reward_batch = np.array(reward_batch)
+        next_state_batch = np.array(next_state_batch)
+        done_batch = np.array(done_batch)
+
+        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
     def len(self):
         return self.size
 
