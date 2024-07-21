@@ -1,7 +1,6 @@
 import sys
 import os
 
-
 from typing import Optional, List, Tuple, Union
 import time
 import random
@@ -17,12 +16,10 @@ from util.file_tools import DroneUrdfAnalyzer
 
 import gym
 from gym import Env
-from gym.spaces import Box,Tuple
+from gym.spaces import Box, Tuple
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.evaluation import evaluate_policy
-
-
 
 logger = getLogger(__name__)
 logger.addHandler(NullHandler())
@@ -75,7 +72,7 @@ class DroneBltEnv(Env):
             is_gui: bool = True,
             is_real_time_sim: bool = False,
             init_xyzs: Optional[Union[List, np.ndarray]] = None,
-            init_target = None,
+            init_target=None,
             init_rpys: Optional[Union[List, np.ndarray]] = None,
     ):
         """
@@ -90,31 +87,29 @@ class DroneBltEnv(Env):
         num_drones : Number of drones to be loaded.
         is_gui : Whether to start PyBullet in GUI mode.
         """
-        #super().__init__(is_gui=is_gui)
+        # super().__init__(is_gui=is_gui)
         self._is_gui = is_gui
         self._drone_type = d_type
         self._urdf_path = urdf_path
         self._physics_mode = phy_mode
         self._wind_direction = np.random.rand(3)
-        self._previous_linear_velocity = [0,0,0]
+        self._previous_linear_velocity = [0, 0, 0]
         self._dp = load_drone_properties(self._urdf_path, self._drone_type)
         ###############################RL###########################
         self.init_target = init_target
         self.near_to_target_time = 0
         self.near_to_target_threshold_time = 5
-        self.distance_threshold = 2
+        self.distance_threshold = 1
         self.episode_threshold = 30
         self.near_ground_time = 0
         self.near_ground_time_threshold = 0
         self.max_action = self._dp.max_rpm
-
-
+        self.prev_distance = 100000;
         ################################RL###########################
 
-
-        #print("--------------------------------------------------")
-        #self.printout_drone_properties()
-        #print("--------------------------------------------------")
+        # print("--------------------------------------------------")
+        # self.printout_drone_properties()
+        # print("--------------------------------------------------")
         # PyBullet simulation settings.
         self._num_drones = num_drones
         self._aggr_phy_steps = aggr_phy_steps
@@ -214,11 +209,12 @@ class DroneBltEnv(Env):
     def get_wind_direction(self) -> int:
         return self._wind_direction
 
-    def get_new_wind(self,wind_power) -> List[int]:
+    def get_new_wind(self, wind_power) -> List[int]:
         wind_change = np.random.uniform(-0.1, 0.1, size=3)
         self._wind_direction += wind_change
         self._wind_direction /= np.linalg.norm(self._wind_direction)
         return self._wind_direction * wind_power
+
     def get_last_rpm_values(self) -> np.ndarray:
         return self._last_rpm_values
 
@@ -245,7 +241,7 @@ class DroneBltEnv(Env):
         return point1, point2
 
     def refresh_bullet_env(self):
-        start_pos , target =  self.make_random_pos()
+        start_pos, target = self.make_random_pos()
         """
         Refresh the PyBullet simulation environment.
         Allocation and zero-ing of the variables and PyBullet's parameters/objects
@@ -282,9 +278,14 @@ class DroneBltEnv(Env):
         #########################RL#######################
         self.init_target = target
         self.near_to_target_time = 0
-        new_state = np.concatenate([self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel ,self.init_target ,np.array([self.near_to_target_time]) ])
+        self.near_ground_time = 0
+        self.prev_distance = np.linalg.norm(self.init_target - self._kis[0].pos)
+        new_state = np.concatenate(
+            [np.array([self.prev_distance]) , self.init_target - self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel,
+             np.array([self.near_to_target_time]) , np.array([self.near_ground_time])])
         #################################################
         return new_state
+
     def get_drone(self):
         return self._drone_ids[0]
 
@@ -299,7 +300,7 @@ class DroneBltEnv(Env):
                 bodyUniqueId=self._drone_ids[i],
                 physicsClientId=self._client,
             )
-            #after test make it to work with multi drones
+            # after test make it to work with multi drones
             self._previous_linear_velocity = self._kis[i].vel
             self._kis[i] = DroneKinematicsInfo(
                 pos=np.array(pos),
@@ -313,12 +314,12 @@ class DroneBltEnv(Env):
         if p.isConnected() != 0:
             p.disconnect(physicsClientId=self._client)
 
-    def reset(self) :
+    def reset(self):
         if p.isConnected() != 0:
             p.resetSimulation(physicsClientId=self._client)
             return self.refresh_bullet_env()
 
-    def step(self, rpm_values , wind = 0):
+    def step(self, rpm_values, wind=0):
         """
         Parameters
         ----------
@@ -357,7 +358,9 @@ class DroneBltEnv(Env):
 
             # Save the last applied action (for compute e.g. drag)
             self._last_rpm_values = rpm_values
-
+####----------------------------------------
+        self.prev_distance = np.linalg.norm(self.init_target - self._kis[0].pos )
+###------------------------------------------
         # Update and store the drones kinematic information
         self.update_drones_kinematic_info()
 
@@ -370,33 +373,44 @@ class DroneBltEnv(Env):
         time_step = 1 / self._sim_freq
 
         #########################RL#######################
-        new_state = np.concatenate([self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel ,self.init_target ,np.array([self.near_to_target_time]) ])
-        distance = np.linalg.norm(self._kis[0].pos - self.init_target)
-        reward = -(distance**5)
+        new_state = np.concatenate(
+            [np.array([self.prev_distance]),self.init_target - self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel, self._kis[0].ang_vel,
+             np.array([self.near_to_target_time]), np.array([self.near_ground_time])])
+        distance = np.linalg.norm(self.init_target - self._kis[0].pos )
+        reward = -(distance ** 2) + (distance - self.prev_distance)
         done = False
         # Check if the roll angle is approximately ±180 degrees (±π radians)
-        if (np.abs(self._kis[0].rpy[0]) > np.pi / 2 or np.abs(self._kis[0].rpy[1]) > np.pi / 2) and self._kis[0].pos[2]<0.1:##upside down on the land
-            reward = -(distance+2)**10
-            done =True
-        if distance <= self.distance_threshold:
-            self.near_to_target_time+=time_step
-        else:
-            self.near_to_target_time = 0# should stay near to target constantly
-        if self.near_to_target_time>self.near_to_target_threshold_time:
+        if (np.abs(self._kis[0].rpy[0]) > np.pi / 2 or np.abs(self._kis[0].rpy[1]) > np.pi / 2) and self._kis[0].pos[
+            2] < 0.1:  ##upside down on the land
+            reward = -(distance + 2) ** 5
             done = True
+
+        if distance <= self.distance_threshold:
+            self.near_to_target_time += time_step
+            reward = 1
+        else:
+            self.near_to_target_time = 0  # should stay near to target constantly
+
+        if self.near_to_target_time > self.near_to_target_threshold_time:
+            reward = 1
+            done = True
+
         if self._sim_counts * time_step > self.episode_threshold:
             done = True
-        if self._kis[0].pos[2]<0.1:
-            self.near_ground_time+=time_step
+
+        if self._kis[0].pos[2] < 0.1 and self.init_target[2] >0.2:
+            self.near_ground_time += time_step
+            reward = -(distance + 2) ** 3
         else:
             self.near_ground_time = 0
-        if self.near_ground_time> self.near_ground_time_threshold:
+
+        if self.near_ground_time > self.near_ground_time_threshold:
             done = True;
-            reward = -(distance+2)**10
+            reward = -(distance + 2) ** 5
 
         #################################################
 
-        return new_state, reward, done , self._kis
+        return new_state, reward, done, self._kis
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:
         """
@@ -489,7 +503,7 @@ class DroneBltEnv(Env):
         nth_drone : The ordinal number of the desired drone in list self._drone_ids.
         """
         assert len(rpm) == 4, f"The length of rpm_values must be 4. currently it is {len(rpm)}."
-        wind_direction_power =  self.get_new_wind(wind)
+        wind_direction_power = self.get_new_wind(wind)
 
         forces = (np.array(rpm) ** 2) * self._dp.kf
         torques = (np.array(rpm) ** 2) * self._dp.km
@@ -778,16 +792,16 @@ class DroneBltEnv(Env):
             gps_reading.append(pos)
         return gps_reading
 
-    def get_simulated_imu(self , noise_std_dev=0.01):
+    def get_simulated_imu(self, noise_std_dev=0.01):
         imu_reading = []
-        time_step = 1/self.get_sim_freq()
+        time_step = 1 / self.get_sim_freq()
         for i in range(self._num_drones):
             orientation = self._kis[i].quat + np.random.normal(scale=noise_std_dev, size=4)
             angular_velocity = self._kis[i].ang_vel + np.random.normal(scale=noise_std_dev, size=3)
-#            linear_acceleration = [(self._kis[i].vel[j] - self._previous_linear_velocity[j]) / time_step for j in range(3)] + np.random.normal(scale=noise_std_dev, size=3)
+            #            linear_acceleration = [(self._kis[i].vel[j] - self._previous_linear_velocity[j]) / time_step for j in range(3)] + np.random.normal(scale=noise_std_dev, size=3)
             linear_acceleration = self._kis[i].vel + np.random.normal(scale=noise_std_dev, size=3)
 
-            imu_reading.append( (orientation, angular_velocity, linear_acceleration) )
+            imu_reading.append((orientation, angular_velocity, linear_acceleration))
         return imu_reading
 
 

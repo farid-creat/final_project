@@ -7,9 +7,10 @@ from .Actor import Actor
 from .Critic import Critic
 from .Memory import Memory
 import numpy as np
+import os
 class DDPGagent:
-    def __init__(self , num_states , num_actions , hidden_size = 256 , actor_learning = 1e-4 , critic_learning = 1e-3
-                 , gamma = 0.99 , tau = 1e-2 , max_memmory_size = 100000):
+    def __init__(self , num_states , num_actions , hidden_size = 512 , actor_learning = 1e-2 , critic_learning = 1e-2
+                 , gamma = 0.95 , tau = 1e-2 , max_memmory_size = 100000):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.device = device
         print(f'running on {device}')
@@ -43,27 +44,30 @@ class DDPGagent:
 
     def update(self , batch_size , out_memory = None , percent_outMemory = 0):
         amount_from_out = batch_size*percent_outMemory//100
-        states , actions , rewards , next_states , _ = self.memory.sample(batch_size - amount_from_out)
+        states , actions , rewards , next_states , dones = self.memory.sample(batch_size - amount_from_out)
         if out_memory is not None:
-            states_out, actions_out, rewards_out, next_states_out, _ = out_memory.sample(amount_from_out)
+            states_out, actions_out, rewards_out, next_states_out, dones_out = out_memory.sample(amount_from_out)
             states = np.concatenate((states, states_out), axis=0)
             actions = np.concatenate((actions, actions_out), axis=0)
             rewards = np.concatenate((rewards, rewards_out), axis=0)
             next_states = np.concatenate((next_states, next_states_out), axis=0)
+            dones = np.concatenate((dones, dones_out), axis=0)
         states = torch.FloatTensor(states).to(self.device)
         next_states = torch.FloatTensor(next_states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
 
         Qvals = self.critic.forward(states,actions)
         next_actions = self.actor_target.forward(next_states)
         next_Q = self.critic_target.forward(next_states,next_actions.detach())
-        rewards = rewards.view(Qvals.size())
-        Qprime = rewards + self.gamma * next_Q
+        rewards = rewards.view(next_Q.size())
+        dones = dones.view(next_Q.size())
+        Qprime = rewards + self.gamma * next_Q * (1 - dones)
         critic_loss = self.critic_criterion(Qvals , Qprime)
         policy_loss = -self.critic.forward(states , self.actor.forward(states)).mean()
 
-        print(f'Critic Loss: {critic_loss}, Policy Loss: {policy_loss}')
+        #print(f'Critic Loss: {critic_loss}, Policy Loss: {policy_loss}')
         self.actor_optimizer.zero_grad()
         policy_loss.backward()
         self.actor_optimizer.step()
@@ -74,4 +78,24 @@ class DDPGagent:
             target_params.data.copy_(params.data*self.tau + target_params.data * (1-self.tau))
         for target_params , params in zip(self.critic_target.parameters() , self.critic.parameters()):
             target_params.data.copy_(params.data * self.tau + target_params.data * (1 - self.tau))
+
+        return critic_loss.detach().cpu() , policy_loss.detach().cpu()
+
+
+    def save_models(self, path):
+        # Create directories if they don't exist
+        os.makedirs(path, exist_ok=True)
+
+        # Save actor and critic models
+        torch.save(self.actor.state_dict(), os.path.join(path, 'actor.pth'))
+        torch.save(self.actor_target.state_dict(), os.path.join(path, 'actor_target.pth'))
+        torch.save(self.critic.state_dict(), os.path.join(path, 'critic.pth'))
+        torch.save(self.critic_target.state_dict(), os.path.join(path, 'critic_target.pth'))
+
+    def load_models(self, path):
+        # Load actor and critic models
+        self.actor.load_state_dict(torch.load(os.path.join(path, 'actor.pth'), map_location=self.device))
+        self.actor_target.load_state_dict(torch.load(os.path.join(path, 'actor_target.pth'), map_location=self.device))
+        self.critic.load_state_dict(torch.load(os.path.join(path, 'critic.pth'), map_location=self.device))
+        self.critic_target.load_state_dict(torch.load(os.path.join(path, 'critic_target.pth'), map_location=self.device))
 

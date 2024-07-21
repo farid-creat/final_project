@@ -51,9 +51,9 @@ if __name__ == "__main__":
     env = DroneBltEnv(
         urdf_path=urdf_file,
         d_type=drone_type,
-        is_gui=True,
+        is_gui=False,
         phy_mode=phy_mode,
-        is_real_time_sim=True,
+        is_real_time_sim=False,
         init_xyzs = init_xyzs,
         init_target= target
     )
@@ -67,29 +67,24 @@ if __name__ == "__main__":
         I_tor=np.array([.0, .0, 500.]),
         D_tor=np.array([20000., 20000., 12000.]),
     )
-    number_of_saved_data=1
     ctrl = DSLPIDControl(env, pid_coeff=pid)
-    sample_number = 100000
+    sample_number = 500000
     rpms = np.array([14300, 14300, 14300, 14300])
     memory = Memory(sample_number)
-    normalizedEnv = NormalizedEnv(0,env.max_action)
+    #normalizedEnv = NormalizedEnv(0,env.max_action)
     eposides = 1000
     for j in range(eposides):
-        if number_of_saved_data==51:
-            break
         state = env.reset()
-
-        if j%100 ==0:
+        if j%10 ==0:
             print(f"episode {j}")
         if memory.size==sample_number:
-            memory.save(f"replay_buffer_data{number_of_saved_data}.pkl")
-            memory.size=0;
-            print(f"saved replay_buffer_data{number_of_saved_data}.pkl")
-            number_of_saved_data+=1
+            memory.save(f"replay_buffer_data{sample_number}.pkl")
+            print(f"saved replay_buffer_data{sample_number}.pkl")
+            break
         for i in range(200000):
             new_state , reward , done ,kis = env.step(rpms)
-            rpms_normalized = normalizedEnv.Normalized_action(rpms)
-            memory.push(state,rpms_normalized,reward , new_state , done)
+            #rpms_normalized = normalizedEnv.Normalized_action(rpms)
+            memory.push(state,rpms,reward , new_state , done)
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=kis[0],

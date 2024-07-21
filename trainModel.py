@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 matplotlib.use('TkAgg')  # or another interactive backend
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
+import os
 # # Logger class to store drone status (optional).
 # from util.data_logger import DroneDataLogger
 def make_random_pos():
@@ -42,6 +43,47 @@ def make_random_pos():
     point1 = np.array([[x_init,y_init,z_init]])
     return point1, point2
 
+
+
+def save_plots(name,rewards , policy_losss , critic_losss , n):
+    agent.save_models(name)
+    print(f'saved {name[:-1]}.pth')
+    plt.figure()  # Create a new figure for each plot
+    if len(rewards) >= n:
+        plt.plot(range(len(rewards) - n, len(rewards)), rewards[-n:], label='Episode Rewards')
+    else:
+        plt.plot(range(len(rewards)), rewards, label='Episode Rewards')
+    plt.xlabel('episode')
+    plt.ylabel('rewards')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name[-1]}_reward.png')
+    plt.savefig(save_path)
+    plt.close()
+    plt.figure()  # Create a new figure for each plot
+    if len(policy_losss) >= n:
+        plt.plot(range(len(policy_losss) - n, len(policy_losss)), policy_losss[-n:], label='Episode policy_losss')
+    else:
+        plt.plot(range(len(policy_losss)), policy_losss, label='Episode policy_losss')
+    plt.xlabel('episode')
+    plt.ylabel('policy_losss')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name}_policy_losss.png')
+    plt.savefig(save_path)
+    plt.close()
+
+    plt.figure()  # Create a new figure for each plot
+    if len(critic_losss) >= n:
+        plt.plot(range(len(critic_losss) - n, len(critic_losss)), critic_losss[-n:], label='Episode critic_losss')
+    else:
+        plt.plot(range(len(critic_losss)), critic_losss, label='Episode critic_losss')
+    plt.xlabel('episode')
+    plt.ylabel('critic_losss')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name}_critic_losss.png')
+    plt.savefig(save_path)
+    plt.close()
+
+
 if __name__ == "__main__":
 
     urdf_file = './assets/drone_x_01.urdf'
@@ -53,82 +95,59 @@ if __name__ == "__main__":
     env = DroneBltEnv(
         urdf_path=urdf_file,
         d_type=drone_type,
-        is_gui=True,
+        is_gui=False,
         phy_mode=phy_mode,
-        is_real_time_sim=True,
+        is_real_time_sim=False,
         init_xyzs = init_xyzs,
         init_target= target
     )
     state = env.reset()
     normalizedEnv = NormalizedEnv(0,env.max_action)
     oUNoise = OUNoise(4,0,env.max_action)
-    agent =  DDPGagent(num_states=state.shape[0] , num_actions=4)
-    batch_size = 128
+    agent =  DDPGagent(num_states=state.shape[0] , num_actions=4 , max_memmory_size=500000)
+    #agent.load_models("new_ddpg_20_agent8")
+    print(f"load new_ddpg_20_agent8")
+    batch_size = 512
     rewards = []
-    avg_rewards = []
-    sample_number = 100000
+    sample_number = 500000
     omegas =None
     memory = Memory(sample_number)
-    percent_outMemory = 30
-
-    for episode in range(501):
-        random_number = random.randint(1, 50)
-        memory.load(f"replay_buffer_data{random_number}.pkl")
+    percent_outMemory = 80
+    memory.load(f"replay_buffer_data{sample_number}.pkl")
+    critic_losss = []
+    policy_losss = []
+    for episode in range(10001):
+        print(episode)
         state = env.reset()
         oUNoise.reset()
         episode_reward = 0
-        if (episode+1)%20==0:
-            torch.save(agent, f'ddpg_agent{(episode+1)//20}.pth')
-            print(f'save ddpg_agent{(episode+1)//20}.pth')
-            plt.figure()  # Create a new figure for each plot
-            if len(rewards) >= 20:
-                plt.plot(range(len(rewards) - 20, len(rewards)), rewards[-20:], label='Episode Rewards')
-                plt.plot(range(len(rewards) - 20, len(rewards)), avg_rewards[-20:], label='Average 10 episode Rewards')
-            else:
-                plt.plot(range(len(rewards)), rewards, label='Episode Rewards')
-                plt.plot(range(len(rewards)), avg_rewards, label='Average 10 episode Rewards')
-            plt.xlabel('episode')
-            plt.ylabel('rewards')
-            #plt.xlim( (len(rewards)-20, len(rewards) ))  # Set the x-axis range from 20 to 40
-            plt.legend(loc='lower left', fontsize='small')
-            plt.savefig(f'ddpg_agent{(episode + 1) // 20}.png')
-            plt.close()
-        if (episode+1)%100==0:
-            plt.figure()  # Create a new figure for each plot
-            if len(rewards) >= 100:
-                plt.plot(range(len(rewards) - 100, len(rewards)), rewards[-100:], label='Episode Rewards')
-                plt.plot(range(len(rewards) - 100, len(rewards)), avg_rewards[-100:], label='Average 10 episode Rewards')
-            else:
-                plt.plot(range(len(rewards)), rewards, label='Episode Rewards')
-                plt.plot(range(len(rewards)), avg_rewards, label='Average 10 episode Rewards')
-            plt.xlabel('episode')
-            plt.ylabel('rewards')
-            #plt.xlim( (len(rewards)-20, len(rewards) ))  # Set the x-axis range from 20 to 40
-            plt.legend(loc='lower left', fontsize='small')
-            plt.savefig(f'total_100_ddpg_agent{(episode + 1) // 20}.png')
-            plt.close()
+        episode_critic_loss = 0
+        episode_policy_loss = 0
+        if (episode+1)%200==0:
+            print(f'new save ddpg_20_agent{(episode+1)//200}.pth')
+            save_plots(f'new_ddpg_20_agent{(episode+1)//200}',rewards,policy_losss,critic_losss,200)
+
+        if (episode+1)%1000==0:
+            save_plots(f'new_ddpg_100_agent{(episode + 1) // 1000}', rewards, policy_losss, critic_losss, 1000)
+
         for step in range(env.get_sim_freq() * 31):#31 second while 30 second is the whole episode
-            action_normalized = agent.get_action(state)
-            action_normalized_noised = oUNoise.get_action(action_normalized , step)
-            action = normalizedEnv.Normalized_to_realspace(action=action_normalized_noised)
-            new_state , reward , done , _ = env.step(action)
-            agent.memory.push(state,action_normalized_noised,reward,new_state,done)
+            action = agent.get_action(state)
+            action_noised = oUNoise.get_action(action , step)
+            #action = normalizedEnv.Normalized_to_realspace(action=action_normalized_noised)
+            new_state , reward , done , _ = env.step(action_noised)
+            agent.memory.push(state,action_noised,reward,new_state,done)
             if agent.memory.size > batch_size:
-                agent.update(batch_size , memory , percent_outMemory)
+                critic_loss , policy_loss = agent.update(batch_size , memory , percent_outMemory)
+                episode_critic_loss += critic_loss
+                episode_policy_loss += policy_loss
             state = new_state
             episode_reward += reward
             if done:
                 break
-        rewards.append(episode_reward)
-        avg_rewards.append(np.mean(rewards[-10:]))
-    torch.save(agent, 'ddpg_agent_final.pth')
-    plt.figure()
-    plt.plot(rewards)
-    plt.plot(avg_rewards)
-    plt.xlabel('episode')
-    plt.ylabel('rewards')
-    plt.savefig('rewards_30%_500e.png')
-    plt.show()
+        rewards.append(episode_reward / (step + 1))
+        critic_losss.append(episode_critic_loss / (step + 1))
+        policy_losss.append(episode_policy_loss / (step + 1))
+    save_plots(f'new_ddpg_total_agent{(episode + 1) // 20}', rewards, policy_losss, critic_losss, 600)
 
 
 """

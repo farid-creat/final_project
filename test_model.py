@@ -66,9 +66,9 @@ if __name__ == "__main__":
     batch_size = 128
     rewards = []
     avg_rewards = []
-    sample_number = 100000
+    sample_number = 500000
     omegas =None
-    agent = torch.load('ddpg_agent2.pth', map_location=torch.device('cuda:0'))
+    agent = torch.load('new_ddpg_agent11.pth', map_location=torch.device('cuda:0'))
     for episode in range(101):
         state = env.reset()
         episode_reward = 0
