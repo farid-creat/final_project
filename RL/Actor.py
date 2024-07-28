@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.autograd
 from torch.autograd import Variable
 class Actor(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=4):
+    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=8):
         super(Actor, self).__init__()
 
         # Define input layer

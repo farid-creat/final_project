@@ -21,6 +21,9 @@ import numpy as np
 import os
 # # Logger class to store drone status (optional).
 # from util.data_logger import DroneDataLogger
+
+# # Logger class to store drone status (optional).
+# from util.data_logger import DroneDataLogger
 def make_random_pos():
     x_init = random.uniform(-10, 10)
     y_init = random.uniform(-10, 10)
@@ -67,7 +70,7 @@ def save_plots(name,rewards , policy_losss , critic_losss , n):
     plt.xlabel('episode')
     plt.ylabel('policy_losss')
     plt.legend(loc='lower left', fontsize='small')
-    save_path = os.path.join(name, f'{name}_policy_losss.png')
+    save_path = os.path.join(name, f'{name[-1]}_policy_losss.png')
     plt.savefig(save_path)
     plt.close()
 
@@ -79,10 +82,21 @@ def save_plots(name,rewards , policy_losss , critic_losss , n):
     plt.xlabel('episode')
     plt.ylabel('critic_losss')
     plt.legend(loc='lower left', fontsize='small')
-    save_path = os.path.join(name, f'{name}_critic_losss.png')
+    save_path = os.path.join(name, f'{name[-1]}_critic_losss.png')
     plt.savefig(save_path)
     plt.close()
 
+    save_path = os.path.join(name, f'{name[-1]}_critic_losss_array.npy')
+    critic_losss_array = np.array(critic_losss)
+    np.save(save_path, critic_losss_array)
+
+    save_path = os.path.join(name, f'{name[-1]}_policy_losss_array.npy')
+    policy_losss_array = np.array(policy_losss)
+    np.save(save_path, policy_losss_array)
+
+    save_path = os.path.join(name, f'{name[-1]}_rewards_array.npy')
+    rewards_array = np.array(rewards)
+    np.save(save_path, rewards_array)
 
 if __name__ == "__main__":
 
@@ -102,33 +116,35 @@ if __name__ == "__main__":
         init_target= target
     )
     state = env.reset()
-    normalizedEnv = NormalizedEnv(0,env.max_action)
     oUNoise = OUNoise(4,0,env.max_action)
     agent =  DDPGagent(num_states=state.shape[0] , num_actions=4 , max_memmory_size=500000)
-    #agent.load_models("new_ddpg_20_agent8")
-    print(f"load new_ddpg_20_agent8")
-    batch_size = 512
+    #agent.load_models("/content/drive/MyDrive/new_ddpg_400_agent42")
+    batch_size = 5024
     rewards = []
+    critic_losss = []
+    policy_losss = []
+    #rewards = np.load('/content/drive/MyDrive/new_ddpg_400_agent42/2_rewards_array.npy').tolist()
+    #critic_losss = np.load('/content/drive/MyDrive/new_ddpg_400_agent42/2_critic_losss_array.npy').tolist()
+    #policy_losss = np.load('/content/drive/MyDrive/new_ddpg_400_agent42/2_policy_losss_array.npy').tolist()
     sample_number = 500000
     omegas =None
     memory = Memory(sample_number)
     percent_outMemory = 80
-    memory.load(f"replay_buffer_data{sample_number}.pkl")
-    critic_losss = []
-    policy_losss = []
-    for episode in range(10001):
+    memory.load("./replay_buffer_data500000.pkl")
+
+    for episode in range(100001):
         print(episode)
         state = env.reset()
         oUNoise.reset()
         episode_reward = 0
         episode_critic_loss = 0
         episode_policy_loss = 0
-        if (episode+1)%200==0:
-            print(f'new save ddpg_20_agent{(episode+1)//200}.pth')
-            save_plots(f'new_ddpg_20_agent{(episode+1)//200}',rewards,policy_losss,critic_losss,200)
-
         if (episode+1)%1000==0:
-            save_plots(f'new_ddpg_100_agent{(episode + 1) // 1000}', rewards, policy_losss, critic_losss, 1000)
+            print(f'./new save ddpg_1000_agent{(episode+1)//1000}.pth')
+            save_plots(f'./new_ddpg_1000_agent{(episode+1)//1000}',rewards,policy_losss,critic_losss,1000)
+
+        if (episode+1)%10000==0:
+            save_plots(f'./new_ddpg_10000_agent{(episode + 1) // 10000}', rewards, policy_losss, critic_losss, 10000)
 
         for step in range(env.get_sim_freq() * 31):#31 second while 30 second is the whole episode
             action = agent.get_action(state)
@@ -136,19 +152,19 @@ if __name__ == "__main__":
             #action = normalizedEnv.Normalized_to_realspace(action=action_normalized_noised)
             new_state , reward , done , _ = env.step(action_noised)
             agent.memory.push(state,action_noised,reward,new_state,done)
-            if agent.memory.size > batch_size:
-                critic_loss , policy_loss = agent.update(batch_size , memory , percent_outMemory)
-                episode_critic_loss += critic_loss
-                episode_policy_loss += policy_loss
+
             state = new_state
             episode_reward += reward
-            if done:
+            if done or step == env.get_sim_freq() * 31 -1:
+                if agent.memory.size > batch_size:
+                    critic_loss , policy_loss = agent.update(batch_size , memory , percent_outMemory)
+                    episode_critic_loss += critic_loss
+                    episode_policy_loss += policy_loss
                 break
         rewards.append(episode_reward / (step + 1))
-        critic_losss.append(episode_critic_loss / (step + 1))
-        policy_losss.append(episode_policy_loss / (step + 1))
-    save_plots(f'new_ddpg_total_agent{(episode + 1) // 20}', rewards, policy_losss, critic_losss, 600)
-
+        critic_losss.append(episode_critic_loss)
+        policy_losss.append(episode_policy_loss)
+    save_plots(f'new_ddpg_total_agent{100000}', rewards, policy_losss, critic_losss, 100000)
 
 """
     agent = torch.load('ddpg_agent.pth', map_location=torch.device('cuda:0'))

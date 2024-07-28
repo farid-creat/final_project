@@ -1,3 +1,27 @@
+import math
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import os
+import torch
+import torch.autograd
+from torch.autograd import Variable
+import torch.optim as optim
+import torch.nn as nn
+import os
+import torch.nn.functional as F
+import random
+from collections import deque
+import pickle
+import numpy as np
+from abc import ABCMeta, abstractmethod
+
+from typing import Optional, List
+import re
+import codecs
+
+import xml.etree.ElementTree as XmlEt
 import sys
 import os
 
@@ -11,22 +35,499 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-from util.data_definition import DroneProperties, DroneType, DroneKinematicsInfo, PhysicsType
-from util.file_tools import DroneUrdfAnalyzer
 
 import gym
 from gym import Env
 from gym.spaces import Box, Tuple
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.evaluation import evaluate_policy
 
-logger = getLogger(__name__)
-logger.addHandler(NullHandler())
+from logging import getLogger, NullHandler, StreamHandler, INFO, DEBUG
+import sys
+import pybullet as p
+import numpy as np
 
 
-# logger.setLevel(DEBUG)  # for standalone debugging
-# logger.addHandler(StreamHandler())  # for standalone debugging
+
+from typing import List, Optional
+from dataclasses import dataclass, field
+###up
+from enum import IntEnum, Enum
+
+import numpy as np
+
+
+@dataclass(init=False, frozen=True)
+class SharedConstants(object):
+    AGGR_PHY_STEPS: int = 5
+    # for default setting
+    SUCCESS_MODEL_FILE_NAME: str = 'success_model.zip'
+    DEFAULT_OUTPUT_DIR_PATH: str = './result'
+    DEFAULT_DRONE_FILE_PATH: str = './assets/drone_x_01.urdf'
+    DEFAULT_DRONE_TYPE_NAME: str = 'x'
+
+
+class DroneType(IntEnum):
+    OTHER = 0
+    QUAD_PLUS = 1
+    QUAD_X = 2
+
+
+class PhysicsType(Enum):
+    """Physics implementations enumeration class."""
+    PYB = "pyb"  # Base PyBullet physics update
+    DYN = "dyn"  # Update with an explicit model of the dynamics
+    PYB_GND = "pyb_gnd"  # PyBullet physics update with ground effect
+    PYB_DRAG = "pyb_drag"  # PyBullet physics update with drag
+    PYB_DW = "pyb_dw"  # PyBullet physics update with downwash
+    PYB_GND_DRAG_DW = "pyb_gnd_drag_dw"  # PyBullet physics update with ground effect, drag, and downwash
+
+
+class ActionType(Enum):
+    """Action type enumeration class."""
+    RPM = "rpm"  # RPMS
+    FORCE = "for"  # Desired thrust and torques (force)
+    PID = "pid"  # PID control
+    VEL = "vel"  # Velocity input (using PID control)
+    TUN = "tun"  # Tune the coefficients of a PID controller
+    ONE_D_RPM = "one_d_rpm"  # 1D (identical input to all motors) with RPMs
+    ONE_D_FORCE = "one_d_for"  # 1D (identical input to all motors) with desired thrust and torques
+    ONE_D_PID = "one_d_pid"  # 1D (identical input to all motors) with PID control
+
+
+class RlAlgorithmType(Enum):
+    """Reinforcement Learning type enumeration class."""
+    A2C = 'a2c'
+    PPO = 'ppo'
+    SAC = 'sac'
+    TD3 = 'td3'
+    DDPG = 'ddpg'
+
+
+class ObservationType(Enum):
+    """Observation type enumeration class."""
+    KIN = "kin"  # Kinematics information (pose, linear and angular velocities)
+    RGB = "rgb"  # RGB camera capture in each drone's POV
+
+
+@dataclass(frozen=True)
+class DroneForcePIDCoefficients(object):
+    P_for: np.ndarray = None  # force
+    I_for: np.ndarray = None
+    D_for: np.ndarray = None
+    P_tor: np.ndarray = None  # torque
+    I_tor: np.ndarray = None
+    D_tor: np.ndarray = None
+
+
+@dataclass
+class DroneKinematicsInfo(object):
+    pos: np.ndarray = np.zeros(3)  # position
+    quat: np.ndarray = np.zeros(4)  # quaternion
+    rpy: np.ndarray = np.zeros(3)  # roll, pitch and yaw
+    vel: np.ndarray = np.zeros(3)  # linear velocity
+    ang_vel: np.ndarray = np.zeros(3)  # angular velocity
+
+
+@dataclass
+class DroneControlTarget(object):
+    pos: np.ndarray = np.zeros(3)  # position
+    vel: np.ndarray = np.zeros(3)  # linear velocity
+    rpy: np.ndarray = np.zeros(3)  # roll, pitch and yaw
+    rpy_rates: np.ndarray = np.zeros(3)  # roll, pitch, and yaw rates
+
+
+@dataclass
+class DroneProperties(object):
+    """
+    The drone parameters.
+
+    kf : It is the proportionality constant for thrust, and thrust is proportional to the square of rotation speed.
+    km : It is the proportionality constant for torque, and torque is proportional to the square of rotation speed.
+
+    """
+    type: int = 1  # The drone type 0:OTHER 1:QUAD_PLUS 2:QUAD_X
+    g: float = 9.8  # gravity acceleration
+    m: Optional[float] = None  # Mass of the drone.
+    l: Optional[float] = None  # Length of the arm of the drone's rotor mount.
+    thrust2weight_ratio: Optional[float] = None
+    ixx: float = 0
+    iyy: float = 0
+    izz: float = 0
+    J: np.ndarray = np.array([])
+    J_inv: np.ndarray = np.array([])
+    kf: Optional[float] = None  # The proportionality constant for thrust.
+    km: Optional[float] = None  # The proportionality constant for torque.
+    collision_h: Optional[float] = None
+    collision_r: Optional[float] = None
+    collision_shape_offsets: List[float] = field(default_factory=list)
+    collision_z_offset: float = None
+    max_speed_kmh: Optional[float] = None
+    gnd_eff_coeff: Optional[float] = None
+    prop_radius: Optional[float] = None
+    drag_coeff_xy: float = 0
+    drag_coeff_z: float = 0
+    drag_coeff: np.ndarray = None
+    dw_coeff_1: Optional[float] = None
+    dw_coeff_2: Optional[float] = None
+    dw_coeff_3: Optional[float] = None
+    # compute after determining the drone type
+    gf: float = 0  # gravity force
+    hover_rpm: float = 0
+    max_rpm: float = 0
+    max_thrust: float = 0
+    max_xy_torque = 0
+    max_z_torque = 0
+    grand_eff_h_clip = 0  # The threshold height for ground effects.
+    A: np.ndarray = np.array([])
+    inv_A: np.ndarray = np.array([])
+    B_coeff: np.ndarray = np.array([])
+    Mixer: np.ndarray = np.ndarray([])  # use for PID control
+
+    def __post_init__(self):
+        self.J = np.diag([self.ixx, self.iyy, self.izz])
+        self.J_inv = np.linalg.inv(self.J)
+        self.collision_z_offset = self.collision_shape_offsets[2]
+        self.drag_coeff = np.array([self.drag_coeff_xy, self.drag_coeff_xy, self.drag_coeff_z])
+        self.gf = self.g * self.m
+        self.hover_rpm = np.sqrt(self.gf / (4 * self.kf))
+        self.max_rpm = np.sqrt((self.thrust2weight_ratio * self.gf) / (4 * self.kf))
+        self.max_thrust = (4 * self.kf * self.max_rpm ** 2)
+        if self.type == 2:  # QUAD_X
+            self.max_xy_torque = (2 * self.l * self.kf * self.max_rpm ** 2) / np.sqrt(2)
+            self.A = np.array([[1, 1, 1, 1], [1 / np.sqrt(2), 1 / np.sqrt(2), -1 / np.sqrt(2), -1 / np.sqrt(2)],
+                               [-1 / np.sqrt(2), 1 / np.sqrt(2), 1 / np.sqrt(2), -1 / np.sqrt(2)], [-1, 1, -1, 1]])
+            self.Mixer = np.array([[.5, -.5, -1], [.5, .5, 1], [-.5, .5, -1], [-.5, -.5, 1]])
+        elif self.type in [0, 1]:  # QUAD_PLUS, OTHER
+            self.max_xy_torque = (self.l * self.kf * self.max_rpm ** 2)
+            self.A = np.array([[1, 1, 1, 1], [0, 1, 0, -1], [-1, 0, 1, 0], [-1, 1, -1, 1]])
+            self.Mixer = np.array([[0, -1, -1], [+1, 0, 1], [0, 1, -1], [-1, 0, 1]])
+        self.max_z_torque = 2 * self.km * self.max_rpm ** 2
+        self.grand_eff_h_clip = 0.25 * self.prop_radius * np.sqrt(
+            (15 * self.max_rpm ** 2 * self.kf * self.gnd_eff_coeff) / self.max_thrust)
+        self.inv_A = np.linalg.inv(self.A)
+        self.B_coeff = np.array([1 / self.kf, 1 / (self.kf * self.l), 1 / (self.kf * self.l), 1 / self.km])
+
+
+
+class FileHandler(metaclass=ABCMeta):
+    def __init__(self, encoding: str = 'utf-8'):
+        self._codec = encoding
+
+    @staticmethod
+    def suffix_check(suffix_list: List[str], file_name: str) -> bool:
+        suffix_list = [s.strip('.') for s in suffix_list]
+        suffix = '|'.join(suffix_list).upper()
+        pattern_str = r'\.(' + suffix + r')$'
+        if not re.search(pattern_str, file_name.upper()):
+            mes = f"""
+            Suffix of the file name should be '{suffix}'.
+            Current file name ： {file_name}
+            """
+            print(mes)
+            return False
+        return True
+
+    def read(self, file_name: str):
+        try:
+            with codecs.open(file_name, 'r', self._codec) as srw:
+                return self.read_handling(srw)
+        except FileNotFoundError:
+            print(f"{file_name} can not be found ...")
+        except OSError as e:
+            print(f"OS error occurred trying to read {file_name}")
+            print(e)
+
+    def write(self, data, file_name: str):
+        try:
+            with codecs.open(file_name, 'w', self._codec) as srw:
+                self.write_handling(data, srw)
+        except OSError as e:
+            print(f"OS error occurred trying to write {file_name}")
+            print(e)
+
+    @abstractmethod
+    def read_handling(self, srw: codecs.StreamReaderWriter):
+        raise NotImplementedError
+
+    @abstractmethod
+    def write_handling(self, data, srw: codecs.StreamReaderWriter):
+        raise NotImplementedError
+
+
+class DroneUrdfAnalyzer(FileHandler):
+    def __init__(self, codec: str = 'utf-8'):
+        super().__init__(codec)
+
+    def read_handling(self, srw: codecs.StreamReaderWriter):
+        return XmlEt.parse(srw)
+
+    def write_handling(self, data, srw: codecs.StreamReaderWriter):
+        pass
+
+    def parse(self, urdf_file: str, drone_type: int = 0, g: float = 9.8) -> Optional[DroneProperties]:
+        # check the file suffix
+        if not self.suffix_check(['.urdf'], urdf_file):
+            return None
+
+        et = self.read(urdf_file)
+
+        if et is None:
+            return None
+
+        root = et.getroot()
+        prop = root[0]
+        link = root[1]  # first link -> link name="base_link"
+
+        dataset = DroneProperties(
+            type=drone_type,
+            g=g,
+            m=float(link[0][1].attrib['value']),
+            l=float(prop.attrib['arm']),
+            thrust2weight_ratio=float(prop.attrib['thrust2weight']),
+            ixx=float(link[0][2].attrib['ixx']),
+            iyy=float(link[0][2].attrib['iyy']),
+            izz=float(link[0][2].attrib['izz']),
+            kf=float(prop.attrib['kf']),
+            km=float(prop.attrib['km']),
+            collision_h=float(link[2][1][0].attrib['length']),
+            collision_r=float(link[2][1][0].attrib['radius']),
+            collision_shape_offsets=[float(s) for s in link[2][0].attrib['xyz'].split(' ')],
+            max_speed_kmh=float(prop.attrib['max_speed_kmh']),
+            gnd_eff_coeff=float(prop.attrib['gnd_eff_coeff']),
+            prop_radius=float(prop.attrib['prop_radius']),
+            drag_coeff_xy=float(prop.attrib['drag_coeff_xy']),
+            dw_coeff_1=float(prop.attrib['dw_coeff_1']),
+            dw_coeff_2=float(prop.attrib['dw_coeff_2']),
+            dw_coeff_3=float(prop.attrib['dw_coeff_3']),
+        )
+
+        return dataset
+
+
+
+
+class Memory:
+    def __init__(self , max_size):
+        self.max_size = max_size
+        self.buffer = deque(maxlen=max_size)
+        self.size = 0
+    def push(self , state , action , reward , next_state , done):
+        experience = (state , action , reward , next_state , done)
+        self.buffer.append(experience)
+        if self.size<self.max_size:
+            self.size+=1
+    def sample (self, batch_size):
+        actual_size = min(batch_size ,self.size)
+        batch = random.sample(self.buffer, actual_size)
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*batch)
+
+        state_batch = np.array(state_batch)
+        action_batch = np.array(action_batch)
+        reward_batch = np.array(reward_batch)
+        next_state_batch = np.array(next_state_batch)
+        done_batch = np.array(done_batch)
+
+        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
+    def len(self):
+        return self.size
+
+    def save(self, file_path):
+        """Save the buffer and size to a file."""
+        with open(file_path, 'wb') as f:
+            # Save the buffer and size to the file
+            pickle.dump((self.buffer, self.size), f)
+
+    def load(self, file_path):
+        """Load the buffer and size from a file."""
+        with open(file_path, 'rb') as f:
+            # Load the buffer and size from the file
+            self.buffer, self.size = pickle.load(f)
+
+
+
+
+class OUNoise():
+    def __init__(self , action_dim , action_low, action_high , mu=0.0 , theta = 0.15 , max_sigma = 0.3 , min_sigma = 0.3 , decay_period = 100_000):
+        self.state = None
+        self.mu = mu
+        self.theta = theta
+        self.max_sigma = max_sigma
+        self.min_sigma = min_sigma
+        self.decay_period = decay_period
+        self.action_dim = action_dim
+        self.action_low = action_low
+        self.action_high = action_high
+        self.sigma = self.max_sigma
+        self.reset()
+    def reset(self):
+        self.state = np.ones(self.action_dim) * self.mu
+
+    def evolve_state(self):
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma*np.random.randn(self.action_dim)
+        self.state = x + dx
+        return self.state
+
+    def get_action(self , action , t=0):
+        ou_state = self.evolve_state()
+        self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1,t/self.decay_period)
+        return np.clip(action + ou_state , self.action_low , self.action_high)
+
+
+class Actor(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=4):
+        super(Actor, self).__init__()
+
+        # Define input layer
+        self.input_layer = nn.Linear(input_size, hidden_size)
+
+        # Define hidden layers
+        self.hidden_layers = nn.ModuleList()
+        for _ in range(hidden_layer_number):
+            self.hidden_layers.append(nn.Linear(hidden_size, hidden_size))
+            self.hidden_layers.append(nn.BatchNorm1d(hidden_size))  # Batch normalization
+
+        # Define output layer
+        self.output_layer = nn.Linear(hidden_size, output_size)
+
+    def forward(self, state):
+        x = F.relu(self.input_layer(state))
+        for i in range(0, len(self.hidden_layers), 2):
+            x = self.hidden_layers[i](x)  # Linear layer
+            if x.size(0) > 1:  # Check if batch size > 1
+                x = self.hidden_layers[i + 1](x)  # BatchNorm layer
+            x = F.relu(x)  # ReLU activation
+        x = self.output_layer(x)
+        return x
+
+class Critic(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=4):
+        super(Critic, self).__init__()
+
+        # Define input layer
+        self.input_layer = nn.Linear(input_size, hidden_size)
+
+        # Define hidden layers
+        self.hidden_layers = nn.ModuleList()
+        for _ in range(hidden_layer_number):
+            self.hidden_layers.append(nn.Linear(hidden_size, hidden_size))
+            self.hidden_layers.append(nn.BatchNorm1d(hidden_size))  # Batch normalization
+        # Define output layer
+        self.output_layer = nn.Linear(hidden_size, output_size)
+
+    def forward(self, state, action):
+        x = torch.cat([state, action], 1)
+
+        x = F.relu(self.input_layer(x))
+
+        for i in range(0, len(self.hidden_layers), 2):
+            x = self.hidden_layers[i](x)  # Linear layer
+            x = self.hidden_layers[i + 1](x)  # BatchNorm layer
+            x = F.relu(x)  # ReLU activation
+        x = self.output_layer(x)
+        return x
+
+
+
+
+class DDPGagent:
+    def __init__(self , num_states , num_actions , hidden_size = 512 , actor_learning = 1e-2 , critic_learning = 1e-2
+                 , gamma = 0.95 , tau = 1e-2 , max_memmory_size = 100000):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device
+        print(f'running on {device}')
+        self.num_states = num_states
+        self.num_actions = num_actions
+        self.gamma = gamma
+        self.tau = tau
+        self.actor = Actor(self.num_states , hidden_size , self.num_actions).to(device)
+        self.actor_target = Actor(self.num_states, hidden_size, self.num_actions).to(device)
+
+        self.critic = Critic(self.num_states + num_actions, hidden_size, 1).to(device)
+        self.critic_target = Critic(self.num_states + num_actions, hidden_size, 1).to(device)
+
+        for target_params , params in zip(self.actor_target.parameters() , self.actor.parameters()):
+            target_params.data.copy_(params.data)
+        for target_params , params in zip(self.critic_target.parameters() , self.critic.parameters()):
+            target_params.data.copy_(params.data)
+
+        self.memory = Memory(max_memmory_size)
+
+        self.critic_criterion = nn.MSELoss()
+
+        self.actor_optimizer = optim.Adam(self.actor.parameters() , lr=actor_learning)
+        self.critic_optimizer = optim.Adam(self.critic.parameters() , lr= critic_learning)
+
+    def get_action(self, state):
+        state = Variable(torch.from_numpy(state).to(self.device).float().unsqueeze(0))
+        action = self.actor.forward(state)
+        action = action.detach().cpu().numpy()[0,:]
+        return action
+
+    def update(self , batch_size , out_memory = None , percent_outMemory = 0):
+        amount_from_out = batch_size*percent_outMemory//100
+        states , actions , rewards , next_states , dones = self.memory.sample(batch_size - amount_from_out)
+        if out_memory is not None:
+            states_out, actions_out, rewards_out, next_states_out, dones_out = out_memory.sample(amount_from_out)
+            states = np.concatenate((states, states_out), axis=0)
+            actions = np.concatenate((actions, actions_out), axis=0)
+            rewards = np.concatenate((rewards, rewards_out), axis=0)
+            next_states = np.concatenate((next_states, next_states_out), axis=0)
+            dones = np.concatenate((dones, dones_out), axis=0)
+        states = torch.FloatTensor(states).to(self.device)
+        next_states = torch.FloatTensor(next_states).to(self.device)
+        actions = torch.FloatTensor(actions).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
+
+        Qvals = self.critic.forward(states,actions)
+        next_actions = self.actor_target.forward(next_states)
+        next_Q = self.critic_target.forward(next_states,next_actions.detach())
+#        rewards = rewards.view(next_Q.size())
+#        dones = dones.view(next_Q.size())
+
+        Qprime = []
+        for i in range(batch_size):
+            Qprime.append(rewards[i] + self.gamma*next_Q[i] * (1-dones[i]))
+        Qprime = torch.tensor(Qprime).to(self.device)
+        Qprime = Qprime.view(Qvals.size())
+        #Qprime = rewards + self.gamma * next_Q * (1 - dones)
+        critic_loss = self.critic_criterion(Qvals , Qprime)
+        policy_loss = -self.critic.forward(states , self.actor.forward(states)).mean()
+
+        #print(f'Critic Loss: {critic_loss}, Policy Loss: {policy_loss}')
+        self.actor_optimizer.zero_grad()
+        policy_loss.backward()
+        self.actor_optimizer.step()
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+        for target_params , params in zip(self.actor_target.parameters() , self.actor.parameters()):
+            target_params.data.copy_(params.data*self.tau + target_params.data * (1-self.tau))
+        for target_params , params in zip(self.critic_target.parameters() , self.critic.parameters()):
+            target_params.data.copy_(params.data * self.tau + target_params.data * (1 - self.tau))
+
+        return critic_loss.detach().cpu() , policy_loss.detach().cpu()
+
+
+    def save_models(self, path):
+        # Create directories if they don't exist
+        os.makedirs(path, exist_ok=True)
+
+        # Save actor and critic models
+        torch.save(self.actor.state_dict(), os.path.join(path, 'actor.pth'))
+        torch.save(self.actor_target.state_dict(), os.path.join(path, 'actor_target.pth'))
+        torch.save(self.critic.state_dict(), os.path.join(path, 'critic.pth'))
+        torch.save(self.critic_target.state_dict(), os.path.join(path, 'critic_target.pth'))
+
+    def load_models(self, path):
+        # Load actor and critic models
+        self.actor.load_state_dict(torch.load(os.path.join(path, 'actor.pth'), map_location=self.device))
+        self.actor_target.load_state_dict(torch.load(os.path.join(path, 'actor_target.pth'), map_location=self.device))
+        self.critic.load_state_dict(torch.load(os.path.join(path, 'critic.pth'), map_location=self.device))
+        self.critic_target.load_state_dict(torch.load(os.path.join(path, 'critic_target.pth'), map_location=self.device))
+
+
+
 
 def real_time_step_synchronization(sim_counts, start_time, time_step):
     """Syncs the stepped simulation with the wall-clock.
@@ -172,7 +673,7 @@ class DroneBltEnv(Env):
                 self._init_xyzs[i, :],
                 p.getQuaternionFromEuler(self._init_rpys[i, :]),
             ) for i in range(self._num_drones)])
-
+        print(len(self._drone_ids))
         # Update the information before running the simulations.
         self.update_drones_kinematic_info()
         ###################################RL######################################
@@ -481,7 +982,7 @@ class DroneBltEnv(Env):
             self.apply_downwash(nth_drone)
 
         def other(rpm, nth_drone: int, last_rpm):
-            logger.error(f"In {self.__class__.__name__}, invalid physic mode key.")
+            print(f"In {self.__class__.__name__}, invalid physic mode key.")
 
         phy_key = self._physics_mode.value
 
@@ -655,21 +1156,6 @@ class DroneBltEnv(Env):
                 )
 
     def apply_dynamics(self, rpm: np.ndarray, nth_drone: int):
-        """
-        Apply dynamics taking into account moment of inertia, etc. (not pybullet base)
-        慣性モーメントなどを考慮した力学を陽解法を用いて適用
-
-        This is a reference from the following ...
-
-            https://github.com/utiasDSL/gym-pybullet-drones/blob/master/gym_pybullet_drones/envs/BaseAviary.py
-
-            Based on code written at the Dynamic Systems Lab by James Xu.
-
-        Parameters
-        ----------
-        rpm : A array with 4 elements. Specify the rotational speed of the four rotors of each drone.
-        nth_drone : The ordinal number of the desired drone in list self._drone_ids.
-        """
         assert len(rpm) == 4, f"The length of rpm_values must be 4. currently it is {len(rpm)}."
 
         # Current state.
@@ -720,22 +1206,6 @@ class DroneBltEnv(Env):
         self._rpy_rates[nth_drone] = rpy_rates
 
     def rpm2forces(self, rpm: np.ndarray) -> Tuple:
-        """
-        Compute thrust and x, y, z axis torque at specified rotor speed.
-
-        Parameters
-        ----------
-        rpm : A array with 4 elements. Specify the rotational speed of the four rotors of each drone.
-
-        Returns
-        -------
-        (
-            thrust,  # It is sum of the thrust of the 4 rotors.
-            x_torque,  # It is the torque generated by the thrust of the rotors.
-            y_torque,  # It is the torque generated by the thrust of the rotors.
-            z_torque,  #  It is sum of the torque of the 4 rotors.
-        )
-        """
         forces = np.array(rpm) ** 2 * self._dp.kf
         thrust = np.sum(forces)
         z_torques = np.array(rpm) ** 2 * self._dp.km
@@ -806,35 +1276,174 @@ class DroneBltEnv(Env):
         return imu_reading
 
 
+
+
+class WindVisualizer:
+    def __init__(self, scale=0.5):
+        # Create a cylinder representing the wind direction
+        self.cylinder_id = p.createVisualShape(p.GEOM_CYLINDER,
+                                               radius=0.05 * scale,
+                                               length=1.0 * scale,
+                                               rgbaColor=[1, 0, 0, 1],  # Red color
+                                               visualFramePosition=[0, 0, 0.5 * scale])
+
+        # Create a cone representing the wind direction
+        self.cone_id = p.createVisualShape(p.GEOM_MESH,
+                                            fileName="cone.obj",  # Cone mesh file
+                                            rgbaColor=[1, 0, 0, 1],  # Red color
+                                            meshScale=[0.1 * scale, 0.1 * scale, 0.3 * scale],  # Scale of the cone
+                                            visualFramePosition=[0.5 * scale, 0, 0])  # Position of the cone
+
+        # Combine the cylinder and cone into a single compound shape
+        self.compound_id = p.createMultiBody(baseVisualShapeIndex=self.cylinder_id,
+                                              basePosition=[0, 0, 0],
+                                              baseOrientation=[0, 0, 0, 1])
+
+    def update_wind_direction(self, wind_direction):
+        # Convert wind direction vector to quaternion
+        orientation = p.getQuaternionFromEuler([wind_direction[0], wind_direction[1], wind_direction[2]])
+
+        # Update the position and orientation of the compound shape
+        p.resetBasePositionAndOrientation(self.compound_id, [0, 0, 0], orientation)
+
+
+
+
+
+
+
+
+# # Logger class to store drone status (optional).
+# from util.data_logger import DroneDataLogger
+
+
+
+
+
+# # Logger class to store drone status (optional).
+# from util.data_logger import DroneDataLogger
+def make_random_pos():
+    x_init = random.uniform(-10, 10)
+    y_init = random.uniform(-10, 10)
+    z_init = random.uniform(0, 10)
+
+    x_target = random.uniform(-10, 10)
+    y_target = random.uniform(-10, 10)
+    z_target = random.uniform(0, 10)
+
+    point1 = np.array([x_init,y_init,z_init])
+    point2 = np.array([x_target,y_target,z_target])
+    distance = np.linalg.norm(point1 - point2)
+
+    while(distance<1):
+        x_target = random.uniform(-10, 10)
+        y_target = random.uniform(-10, 10)
+        z_target = random.uniform(0, 10)
+        point2 = np.array([x_target, y_target, z_target])
+        distance = np.linalg.norm(point1 - point2)
+    point1 = np.array([[x_init,y_init,z_init]])
+    return point1, point2
+
+
+
+def save_plots(name,rewards , policy_losss , critic_losss , n):
+    agent.save_models(name)
+    print(f'saved {name[:-1]}.pth')
+    plt.figure()  # Create a new figure for each plot
+    if len(rewards) >= n:
+        plt.plot(range(len(rewards) - n, len(rewards)), rewards[-n:], label='Episode Rewards')
+    else:
+        plt.plot(range(len(rewards)), rewards, label='Episode Rewards')
+    plt.xlabel('episode')
+    plt.ylabel('rewards')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name[-1]}_reward.png')
+    plt.savefig(save_path)
+    plt.close()
+    plt.figure()  # Create a new figure for each plot
+    if len(policy_losss) >= n:
+        plt.plot(range(len(policy_losss) - n, len(policy_losss)), policy_losss[-n:], label='Episode policy_losss')
+    else:
+        plt.plot(range(len(policy_losss)), policy_losss, label='Episode policy_losss')
+    plt.xlabel('episode')
+    plt.ylabel('policy_losss')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name}_policy_losss.png')
+    plt.savefig(save_path)
+    plt.close()
+
+    plt.figure()  # Create a new figure for each plot
+    if len(critic_losss) >= n:
+        plt.plot(range(len(critic_losss) - n, len(critic_losss)), critic_losss[-n:], label='Episode critic_losss')
+    else:
+        plt.plot(range(len(critic_losss)), critic_losss, label='Episode critic_losss')
+    plt.xlabel('episode')
+    plt.ylabel('critic_losss')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name}_critic_losss.png')
+    plt.savefig(save_path)
+    plt.close()
+
+
 if __name__ == "__main__":
-    '''
-    If you want to run this module by itself, try the following.
 
-       $ python -m blt_env.drone
-
-    '''
-
-    urdf_file = './assets/drone_x_01.urdf'
+    urdf_file = '/content/drive/MyDrive/drone_x_01.urdf'
     drone_type = DroneType.QUAD_X
     phy_mode = PhysicsType.PYB
-    # phy_mode = PhysicsType.DYN
+
+    init_xyzs , target= make_random_pos()
 
     env = DroneBltEnv(
         urdf_path=urdf_file,
         d_type=drone_type,
-        is_gui=True,
+        is_gui=False,
         phy_mode=phy_mode,
-        num_drones=2,
+        is_real_time_sim=False,
+        init_xyzs = init_xyzs,
+        init_target= target
     )
+    state = env.reset()
+    oUNoise = OUNoise(4,0,env.max_action)
+    agent =  DDPGagent(num_states=state.shape[0] , num_actions=4 , max_memmory_size=500000)
+    #agent.load_models("new_ddpg_20_agent8")
+    batch_size = 1024
+    rewards = []
+    sample_number = 500000
+    omegas =None
+    memory = Memory(sample_number)
+    percent_outMemory = 80
+    memory.load("/content/drive/MyDrive/replay_buffer_data500000.pkl")
+    critic_losss = []
+    policy_losss = []
+    for episode in range(10001):
+        print(episode)
+        state = env.reset()
+        oUNoise.reset()
+        episode_reward = 0
+        episode_critic_loss = 0
+        episode_policy_loss = 0
+        if (episode+1)%100==0:
+            print(f'/content/drive/MyDrive/new save ddpg_100_agent{(episode+1)//100}.pth')
+            save_plots(f'/content/drive/MyDrive/new_ddpg_100_agent{(episode+1)//100}',rewards,policy_losss,critic_losss,100)
 
-    env.printout_drone_properties()
+        if (episode+1)%1000==0:
+            save_plots(f'/content/drive/MyDrive/new_ddpg_100_agent{(episode + 1) // 1000}', rewards, policy_losss, critic_losss, 1000)
 
-    rpms = np.array([14600, 14600, 14600, 14600])
-
-    step_num = 1_000
-    for _ in range(step_num):
-        ki = env.step(rpms)
-        # print(ki)
-        time.sleep(env.get_sim_time_step())
-
-    env.close()
+        for step in range(env.get_sim_freq() * 31):#31 second while 30 second is the whole episode
+            action = agent.get_action(state)
+            action_noised = oUNoise.get_action(action , step)
+            #action = normalizedEnv.Normalized_to_realspace(action=action_normalized_noised)
+            new_state , reward , done , _ = env.step(action_noised)
+            agent.memory.push(state,action_noised,reward,new_state,done)
+            if agent.memory.size > batch_size:
+                critic_loss , policy_loss = agent.update(batch_size , memory , percent_outMemory)
+                episode_critic_loss += critic_loss
+                episode_policy_loss += policy_loss
+            state = new_state
+            episode_reward += reward
+            if done:
+                break
+        rewards.append(episode_reward / (step + 1))
+        critic_losss.append(episode_critic_loss / (step + 1))
+        policy_losss.append(episode_policy_loss / (step + 1))
+    save_plots(f'new_ddpg_total_agent{(episode + 1) // 20}', rewards, policy_losss, critic_losss, 10000)

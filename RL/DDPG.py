@@ -61,9 +61,15 @@ class DDPGagent:
         Qvals = self.critic.forward(states,actions)
         next_actions = self.actor_target.forward(next_states)
         next_Q = self.critic_target.forward(next_states,next_actions.detach())
-        rewards = rewards.view(next_Q.size())
-        dones = dones.view(next_Q.size())
-        Qprime = rewards + self.gamma * next_Q * (1 - dones)
+#        rewards = rewards.view(next_Q.size())
+#        dones = dones.view(next_Q.size())
+
+        Qprime = []
+        for i in range(batch_size):
+            Qprime.append(rewards[i] + self.gamma*next_Q[i] * (1-dones[i]))
+        Qprime = torch.tensor(Qprime).to(self.device)
+        Qprime = Qprime.view(Qvals.size())
+        #Qprime = rewards + self.gamma * next_Q * (1 - dones)
         critic_loss = self.critic_criterion(Qvals , Qprime)
         policy_loss = -self.critic.forward(states , self.actor.forward(states)).mean()
 
