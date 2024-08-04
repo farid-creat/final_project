@@ -95,17 +95,7 @@ class DroneBltEnv(Env):
         self._wind_direction = np.random.rand(3)
         self._previous_linear_velocity = [0, 0, 0]
         self._dp = load_drone_properties(self._urdf_path, self._drone_type)
-        ###############################RL###########################
-        self.init_target = init_target
-        self.near_to_target_time = 0
-        self.near_to_target_threshold_time = 5
-        self.distance_threshold = 1
-        self.episode_threshold = 30
-        self.near_ground_time = 0
-        self.near_ground_time_threshold = 0
-        self.max_action = self._dp.max_rpm
-        self.prev_distance = 100000;
-        ################################RL###########################
+
 
         # print("--------------------------------------------------")
         # self.printout_drone_properties()
@@ -176,7 +166,19 @@ class DroneBltEnv(Env):
         # Update the information before running the simulations.
         self.update_drones_kinematic_info()
         ###################################RL######################################
-
+        ###############################RL###########################
+        self.init_target = init_target
+        self.near_to_target_time = 0
+        self.near_to_target_threshold_time = 5
+        self.distance_threshold = 1
+        self.episode_threshold = 30
+        self.near_ground_time = 0
+        self.near_ground_time_threshold = 0
+        self.max_action = self._dp.max_rpm
+        self.prev_distance = 100000;
+        self.init_distance = np.linalg.norm(self.init_target - self._init_xyzs[0, :])
+        print(self.init_distance)
+        ################################RL###########################
         ###################################RL######################################
         # Start measuring time.
         self._start_time = time.time()
@@ -277,6 +279,7 @@ class DroneBltEnv(Env):
         self._start_time = time.time()
         #########################RL#######################
         self.init_target = target
+        self.init_distance = np.linalg.norm(self.init_target - start_pos[0, :])
         self.near_to_target_time = 0
         self.near_ground_time = 0
         self.prev_distance = np.linalg.norm(self.init_target - self._kis[0].pos)
@@ -503,6 +506,7 @@ class DroneBltEnv(Env):
         rpm : A array with 4 elements. Specify the rotational speed of the four rotors of each drone.
         nth_drone : The ordinal number of the desired drone in list self._drone_ids.
         """
+        rpm = np.clip(rpm, 0, self._dp.max_rpm)
         assert len(rpm) == 4, f"The length of rpm_values must be 4. currently it is {len(rpm)}."
         wind_direction_power = self.get_new_wind(wind)
 

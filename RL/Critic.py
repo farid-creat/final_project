@@ -6,7 +6,7 @@ from torch.autograd import Variable
 
 
 class Critic(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=8):
+    def __init__(self, input_size, hidden_size, output_size, hidden_layer_number=5):
         super(Critic, self).__init__()
 
         # Define input layer
