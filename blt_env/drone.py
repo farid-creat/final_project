@@ -173,7 +173,7 @@ class DroneBltEnv(Env):
         self.distance_threshold = 1
         self.episode_threshold = 30
         self.near_ground_time = 0
-        self.near_ground_time_threshold = 0
+        self.near_ground_time_threshold = 5
         self.max_action = self._dp.max_rpm
         self.prev_distance = 100000;
         self.init_distance = np.linalg.norm(self.init_target - self._init_xyzs[0, :])
@@ -229,17 +229,17 @@ class DroneBltEnv(Env):
         y_target = random.uniform(-10, 10)
         z_target = random.uniform(0, 10)
 
-        point1 = np.array([x_init, y_init, z_init])
-        point2 = np.array([x_target, y_target, z_target])
+        point1 = np.array([2, 2, 2])
+        point2 = np.array([5, 5, 2])
         distance = np.linalg.norm(point1 - point2)
 
         while (distance < 1):
             x_target = random.uniform(-10, 10)
             y_target = random.uniform(-10, 10)
             z_target = random.uniform(0, 10)
-            point2 = np.array([x_target, y_target, z_target])
+            point2 = np.array([x_target, y_target, z_init])
             distance = np.linalg.norm(point1 - point2)
-        point1 = np.array([[x_init, y_init, z_init]])
+        point1 = np.array([[2, 2, 2]])
         return point1, point2
 
     def refresh_bullet_env(self):
@@ -323,7 +323,7 @@ class DroneBltEnv(Env):
             p.resetSimulation(physicsClientId=self._client)
             return self.refresh_bullet_env()
 
-    def step(self, rpm_values, wind=0):
+    def step(self, rpm_values, wind=random.random()*5):
         """
         Parameters
         ----------
@@ -380,37 +380,41 @@ class DroneBltEnv(Env):
         new_state = np.concatenate(
             [np.array([self.prev_distance]), self.init_target - self._kis[0].pos, self._kis[0].rpy, self._kis[0].vel,
              self._kis[0].ang_vel,
-             np.array([self.near_to_target_time]), np.array([self.near_ground_time])])
+             np.array([self.near_to_target_time]), np.array([self.near_ground_time])])# hazf , ertefa
+
+
         distance = np.linalg.norm(self.init_target - self._kis[0].pos)
-        reward = -(distance ** 2) + (distance - self.prev_distance)
+        print(f'distances : {self.prev_distance - distance} ')
+
+        reward = (self.init_distance - distance)
         done = False
         # Check if the roll angle is approximately ±180 degrees (±π radians)
         if (np.abs(self._kis[0].rpy[0]) > np.pi / 2 or np.abs(self._kis[0].rpy[1]) > np.pi / 2) and self._kis[0].pos[2] < 0.1:  ##upside down on the land
-            reward = -(distance + 2) ** 5
+            reward = -(distance + 2) ** 2
             done = True
 
         if distance <= self.distance_threshold:
             self.near_to_target_time += time_step
-            reward = 1
+            reward += self.init_distance - distance
         else:
             self.near_to_target_time = 0  # should stay near to target constantly
 
         if self.near_to_target_time > self.near_to_target_threshold_time:
-            reward = 1
+            reward += self.init_distance - distance
             done = True
 
         if self._sim_counts * time_step > self.episode_threshold:
             done = True
 
         if self._kis[0].pos[2] < 0.1 and self.init_target[2] > 0.2:
-            self.near_ground_time += time_step
-            reward = -(distance + 2) ** 3
-        else:
-            self.near_ground_time = 0
+            self.near_ground_time +=1
+            self.near_ground_time_threshold = 5
+            reward = -(distance + 2) ** 2
+        if self.near_ground_time*time_step > self.near_ground_time_threshold:
+            done = True
 
-        if self.near_ground_time > self.near_ground_time_threshold:
-            done = True;
-            reward = -(distance + 2) ** 5
+
+
 
         #################################################
 

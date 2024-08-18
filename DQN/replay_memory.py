@@ -85,7 +85,7 @@ class ReplayMemory:
 
         return states, actions, next_states, rewards, dones
 
-    def __len__(self):
+    def len(self):
         """
         Function that specifies the number of elements persent in the replay memory
 

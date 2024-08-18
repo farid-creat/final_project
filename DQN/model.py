@@ -1,6 +1,7 @@
 """
 Script that contains details about the neural network model used for the DQN Agent
 """
+import os
 
 import torch
 import torch.nn as nn
@@ -16,8 +17,10 @@ class DQNNet(nn.Module):
         self.dense1 = nn.Linear(input_size, 512)
         self.dense2 = nn.Linear(512, 512)
         self.dense3 = nn.Linear(512, 512)
-        self.dense4 = nn.Linear(512, 300)
-        self.dense5 = nn.Linear(300, output_size)
+        self.dense4 = nn.Linear(512, 256)
+        self.dense5 = nn.Linear(256, 256)
+        self.dense6 = nn.Linear(256, 128)
+        self.dense7 = nn.Linear(128, output_size)
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
@@ -26,15 +29,17 @@ class DQNNet(nn.Module):
         x = F.relu(self.dense2(x))
         x = F.relu(self.dense3(x))
         x = F.relu(self.dense4(x))
-        x = self.dense5(x)
+        x = F.relu(self.dense5(x))
+        x = F.relu(self.dense6(x))
+        x = self.dense7(x)
         return x
 
-    def save_model(self, filename):
-        torch.save(self.state_dict(), filename)
+    def save_model(self, path , name):
+        os.makedirs(path, exist_ok=True)
+        torch.save(self.state_dict(), os.path.join(path, f'{name}.pth'))
 
-    def load_model(self, filename, device):
+    def load_model(self, path, device , name):
+        self.load_state_dict(torch.load(os.path.join(path, f'{name}.pth'), map_location=device))
 
-        # map_location is required to ensure that a model that is trained on GPU can be run even on CPU
-        self.load_state_dict(torch.load(filename, map_location=device))
 
 

@@ -51,7 +51,7 @@ if __name__ == "__main__":
     env = DroneBltEnv(
         urdf_path=urdf_file,
         d_type=drone_type,
-        is_gui=False,
+        is_gui=True,
         phy_mode=phy_mode,
         is_real_time_sim=False,
         init_xyzs = init_xyzs,
