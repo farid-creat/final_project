@@ -58,6 +58,7 @@ class DDPGagent:
         rewards = torch.FloatTensor(rewards).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
 
+
         Qvals = self.critic.forward(states,actions)
         next_actions = self.actor_target.forward(next_states)
         next_Q = self.critic_target.forward(next_states,next_actions.detach())
@@ -71,11 +72,11 @@ class DDPGagent:
         Qprime = Qprime.view(Qvals.size())
         #Qprime = rewards + self.gamma * next_Q * (1 - dones)
         critic_loss = self.critic_criterion(Qvals , Qprime)
-        policy_loss = -self.critic.forward(states , self.actor.forward(states)).mean()
+        policy_objective = -self.critic.forward(states , self.actor.forward(states)).mean()
 
         #print(f'Critic Loss: {critic_loss}, Policy Loss: {policy_loss}')
         self.actor_optimizer.zero_grad()
-        policy_loss.backward()
+        policy_objective.backward()
         self.actor_optimizer.step()
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -84,8 +85,7 @@ class DDPGagent:
             target_params.data.copy_(params.data*self.tau + target_params.data * (1-self.tau))
         for target_params , params in zip(self.critic_target.parameters() , self.critic.parameters()):
             target_params.data.copy_(params.data * self.tau + target_params.data * (1 - self.tau))
-
-        return critic_loss.detach().cpu() , policy_loss.detach().cpu()
+        return critic_loss.detach().cpu() , policy_objective.detach().cpu()
 
 
     def save_models(self, path):

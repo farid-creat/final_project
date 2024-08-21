@@ -14,8 +14,7 @@ class DuelingDeepQNetwork(nn.Module):
         super(DuelingDeepQNetwork, self).__init__()
 
         self.fc1 = nn.Linear(*input_dims, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, 256)
+        self.fc2 = nn.Linear(512, 256)
         self.V = nn.Linear(256, 1)
         self.A = nn.Linear(256, n_actions)
 
@@ -109,28 +108,24 @@ class Agent():
             return
         self.q_eval.optimizer.zero_grad()
         self.replace_target_network()
-
         state, action, reward, new_state, done = self.memory.sample_buffer(self.batch_size)
         states = T.tensor(state).to(self.q_eval.device)
         actions = T.tensor(action).to(self.q_eval.device)
         rewards = T.tensor(reward).to(self.q_eval.device)
         states_ = T.tensor(new_state).to(self.q_eval.device)
         dones = T.tensor(done).to(self.q_eval.device).bool()
-
         indices = np.arange(self.batch_size)
 
         V_s, A_s = self.q_eval.forward(states)
-        V_s_, A_s_ = self.q_next.forward(states_)
-        V_s_eval, A_s_eval = self.q_eval.forward(states_)
-
         q_pred = T.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True)))[indices, actions]
+        V_s_, A_s_ = self.q_next.forward(states_)
         q_next = T.add(V_s_, (A_s_ - A_s_.mean(dim=1, keepdim=True)))
+        q_next = q_next.detach()
+        V_s_eval, A_s_eval = self.q_eval.forward(states_)
         q_eval = T.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))
-
         max_actions = T.argmax(q_eval, dim=1)
         q_next[dones] = 0.0
         q_target = rewards + self.gamma * q_next[indices, max_actions]
-
         loss = self.q_eval.loss(q_target, q_pred)
         loss.backward()
         self.q_eval.optimizer.step()

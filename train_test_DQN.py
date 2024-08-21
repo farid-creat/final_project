@@ -20,11 +20,9 @@ class PaterGenerator:
     def __init__(self):
         self.pos_to_reach = None
         self.prev_command = -1
-
     def reset(self):
         self.pos_to_reach = None
         self.prev_command = -1
-
     def patern_generator(self, action_num, ctrl, info):  # 0 no op 1 forward 2 back 3 left 4 right
         rpms = None
         if self.pos_to_reach is None:
@@ -122,6 +120,7 @@ def fill_memory(env, dqn_agent, action_number , patergenerator):
             patergenerator.reset()
             omegas = np.array([14300, 14300, 14300, 14300])
             next_state, reward, done, info = env.step(omegas)
+    print('...memory filled...')
 
 def make_random_pos():
     x_init = random.uniform(-10, 10)
@@ -145,7 +144,7 @@ def make_random_pos():
     point1 = np.array([[x_init, y_init, z_init]])
     return point1, point2
 
-def save_plots(agent, name, rewards, Q_Learning_Loss, q_values, n):
+def save_plots(agent, name, rewards, Q_Learning_Loss, q_values,episode_mean_reward, n):
     agent.save_models(name)
     print(f'saved {name[:-1]}.pth')
     plt.figure()  # Create a new figure for each plot
@@ -161,7 +160,18 @@ def save_plots(agent, name, rewards, Q_Learning_Loss, q_values, n):
     plt.savefig(save_path)
     plt.close()
 
-
+    plt.figure()  # Create a new figure for each plot
+    if len(episode_mean_reward) >= n:
+        plt.plot(range(len(episode_mean_reward) - n, len(episode_mean_reward)), episode_mean_reward[-n:],
+                 label='Episode Q_Learning_Loss')
+    else:
+        plt.plot(range(len(episode_mean_reward)), episode_mean_reward, label='Episode Q_Learning_Loss')
+    plt.xlabel('episode')
+    plt.ylabel('episode_mean_reward')
+    plt.legend(loc='lower left', fontsize='small')
+    save_path = os.path.join(name, f'{name[-1]}_episode_mean_reward.png')
+    plt.savefig(save_path)
+    plt.close()
 
     plt.figure()  # Create a new figure for each plot
     if len(rewards) >= n:
@@ -201,6 +211,11 @@ def save_plots(agent, name, rewards, Q_Learning_Loss, q_values, n):
     np.save(save_path, q_values_array)
 
 
+    save_path = os.path.join(name, f'{name[-1]}_episode_mean_reward_array.npy')
+    episode_mean_reward_array = np.array(episode_mean_reward)
+    np.save(save_path, episode_mean_reward_array)
+
+
 if __name__ == "__main__":
 
     urdf_file = './assets/drone_x_01.urdf'
@@ -231,24 +246,23 @@ if __name__ == "__main__":
     ctrl = DSLPIDControl(env, pid_coeff=pid)
     patergenerator = PaterGenerator()
     load_checkpoint = False
-    agent = Agent(gamma=0.99, epsilon=1.0, lr=1e-4,
+    agent = Agent(gamma=0.99, epsilon=1.0, lr=1e-3,
                   input_dims=[state.shape[0]], n_actions=5, mem_size=50000,
-                  eps_min=0.1, batch_size=64, eps_dec=1e-5, replace=1000)
+                  eps_min=0.01, batch_size=256, eps_dec=1e-5, replace=1000)
     if load_checkpoint:
         agent.load_models()
-    #agent.load_models("new_dqn_30_agent10")
+    #agent.load_models("new_dqn_30_agent19")
     #agent.load_models("best_model/dqn_model")
     rewards = []
     q_values = []
     episode_mean_reward = []
     Q_Learning_Loss = []
     best_score = -np.inf
-    #rewards = np.load('new_dqn_30_agent10/0_rewards_array.npy').tolist()
-    #Q_Learning_Loss = np.load('new_dqn_30_agent10/0_Q_Learning_Loss_array.npy').tolist()
-    #q_values = np.load('new_dqn_30_agent10/0_q_values_array.npy').tolist()
+    #rewards = np.load('new_dqn_30_agent19/9_rewards_array.npy').tolist()
+    #Q_Learning_Loss = np.load('new_dqn_30_agent19/9_Q_Learning_Loss_array.npy').tolist()
+    #q_values = np.load('new_dqn_30_agent19/9_q_values_array.npy').tolist()
     omegas = np.array([14300, 14300, 14300, 14300])
     fill_memory(env, agent , 5 , patergenerator)
-    print('Memory filled.')
     if True:
         for episode in range(5001):
 
@@ -283,16 +297,17 @@ if __name__ == "__main__":
                   f'Q_Learning_Loss : {episode_Q_Learning_Loss}\n'
                   f'q_values : {q_value}\n'
                   f'reward : {reward}\n'
+                  f'episode_mean_reward : {episode_reward/step}\n'
                   f'mean reward : {current_avg_score}\n'
                   f'---------------------------------------------')
 
             if (episode + 1) % 30 == 0:
                 print(f'./new save dqn_30_agent{(episode + 1) // 30}.pth')
-                save_plots(agent, f'./new_dqn_30_agent{(episode + 1) // 30}', rewards, Q_Learning_Loss ,q_values , 31)
+                save_plots(agent, f'./new_dqn_30_agent{(episode + 1) // 30}', rewards, Q_Learning_Loss ,q_values , episode_mean_reward , 31)
                 agent.reset_memory()
                 fill_memory(env, agent, 5, patergenerator)
             if (episode + 1) % 100 == 0:
-                save_plots(agent , f'./new_dqn_100_agent{(episode + 1) // 100}', rewards, Q_Learning_Loss ,q_values, 101)
+                save_plots(agent , f'./new_dqn_100_agent{(episode + 1) // 100}', rewards, Q_Learning_Loss ,q_values,episode_mean_reward, 101)
 
 
             if current_avg_score >= best_score:
