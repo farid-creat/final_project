@@ -232,7 +232,7 @@ class DroneBltEnv(Env):
         point2 = np.array([x_target, y_target, z_init])
         distance = np.linalg.norm(point1 - point2)
 
-        while (distance < 4):
+        while (distance < 9):
             x_target = random.uniform(-10, 10)
             y_target = random.uniform(-10, 10)
             z_target = random.uniform(0, 10)
@@ -403,6 +403,9 @@ class DroneBltEnv(Env):
             reward = ((self.init_distance - distance) / self.init_distance * 50 )* (max(time_remain,1))
             done = True
         #################################################
+
+        if reward==-500:
+            done = True
         return new_state, reward, done, self._kis
 
     def check_values_for_rotors(self, rpm_values: np.ndarray) -> np.ndarray:

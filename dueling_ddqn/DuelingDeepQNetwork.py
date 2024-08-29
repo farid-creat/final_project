@@ -10,26 +10,36 @@ from .ReplayBuffer import ReplayMemory
 
 class DuelingDeepQNetwork(nn.Module):
 
-    def __init__(self, lr, n_actions, input_dims):
+    def __init__(self, lr, n_actions, input_dims, dropout_p=0.2):
         super(DuelingDeepQNetwork, self).__init__()
 
         self.fc1 = nn.Linear(*input_dims, 512)
-        self.fc2 = nn.Linear(512, 256)
-        self.V = nn.Linear(256, 1)
-        self.A = nn.Linear(256, n_actions)
+#        self.fc2 = nn.Linear(512, 512)
+        #self.fc3 = nn.Linear(256, 128)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+
+        self.V = nn.Linear(512, 1)
+        self.A = nn.Linear(512, n_actions)
+
+        self.optimizer = optim.AdamW(self.parameters(), lr=lr)
         self.loss = nn.MSELoss()
         self.device = T.device('cuda' if T.cuda.is_available() else 'cpu')
         self.to(self.device)
         print(f'running on {self.device}')
 
     def forward(self, state):
-        flat1 = F.relu(self.fc1(state))
-        flat2 = F.relu(self.fc2(flat1))
-        flat3 = F.relu(self.fc3(flat2))
-        V = self.V(flat3)
-        A = self.A(flat3)
+        x = F.relu(self.fc1(state))
+
+        # First Residual Block
+        #x = F.relu(self.fc2(x))  ########relu
+        #x = self.dropout(x)  ##########
+        # Second Residual Block
+        #x = F.leaky_relu(self.fc3(x), negative_slope=0.1)  ######
+        #x = self.dropout(x)  ######
+
+        V = self.V(x)
+        A = self.A(x)
+
         return V, A
 
     def save_model(self, path, name):
@@ -65,12 +75,13 @@ class Agent():
 
         self.q_next = DuelingDeepQNetwork(self.lr, self.n_actions,
                                           input_dims=self.input_dims)
+
     def reset_memory(self):
         self.memory.reset();
 
     def predict_q_value(self, state, action):
         state = T.tensor([state], dtype=T.float).to(self.q_eval.device)
-        #if len(state.shape) == 1:
+        # if len(state.shape) == 1:
         #    state = state.unsqueeze(0)  # Add a batch dimension
         V, A = self.q_eval.forward(state)
         q_value = V + (A - A.mean(dim=1, keepdim=True))
@@ -103,31 +114,47 @@ class Agent():
         self.q_eval.load_model(path=path, device=self.q_eval.device, name="q_eval")
         self.q_next.load_model(path=path, device=self.q_next.device, name="q_next")
 
-    def learn(self):
+    def learn(self, memory_random, memory_optimal):
         if self.memory.mem_cntr < self.batch_size:
             return
         self.q_eval.optimizer.zero_grad()
         self.replace_target_network()
-        state, action, reward, new_state, done = self.memory.sample_buffer(self.batch_size)
-        states = T.tensor(state).to(self.q_eval.device)
-        actions = T.tensor(action).to(self.q_eval.device)
-        rewards = T.tensor(reward).to(self.q_eval.device)
-        states_ = T.tensor(new_state).to(self.q_eval.device)
+
+        state_r, action_r, reward_r, new_state_r, done_r = memory_random.sample_buffer(self.batch_size // 3)
+        state_o, action_o, reward_o, new_state_o, done_o = memory_optimal.sample_buffer(self.batch_size // 3)
+        remain = int(self.batch_size - (self.batch_size // 3) * 2)
+        state, action, reward, new_state, done = self.memory.sample_buffer(remain)
+
+
+        state = np.concatenate((state, state_r, state_o), axis=0)
+        action = np.concatenate((action, action_r, action_o), axis=0)
+        reward = np.concatenate((reward, reward_r, reward_o), axis=0)
+        new_state = np.concatenate((new_state, new_state_r, new_state_o), axis=0)
+        done = np.concatenate((done, done_r, done_o), axis=0)
+
+        states = T.tensor(state, dtype=T.float).to(self.q_eval.device)
+        actions = T.tensor(action, dtype=T.long).to(self.q_eval.device)
+        rewards = T.tensor(reward, dtype=T.float).to(self.q_eval.device)
+        states_ = T.tensor(new_state, dtype=T.float).to(self.q_eval.device)
         dones = T.tensor(done).to(self.q_eval.device).bool()
+
         indices = np.arange(self.batch_size)
 
         V_s, A_s = self.q_eval.forward(states)
-        q_pred = T.add(V_s, (A_s - A_s.mean(dim=1, keepdim=True)))[indices, actions]
+        q_pred = (V_s + (A_s - A_s.mean(dim=1, keepdim=True)))[indices, actions]
         V_s_, A_s_ = self.q_next.forward(states_)
-        q_next = T.add(V_s_, (A_s_ - A_s_.mean(dim=1, keepdim=True)))
+        q_next = V_s_ + (A_s_ - A_s_.mean(dim=1, keepdim=True))
         q_next = q_next.detach()
         V_s_eval, A_s_eval = self.q_eval.forward(states_)
-        q_eval = T.add(V_s_eval, (A_s_eval - A_s_eval.mean(dim=1, keepdim=True)))
+        q_eval = V_s_eval + (A_s_eval - A_s_eval.mean(dim=1, keepdim=True))
         max_actions = T.argmax(q_eval, dim=1)
         q_next[dones] = 0.0
         q_target = rewards + self.gamma * q_next[indices, max_actions]
         loss = self.q_eval.loss(q_target, q_pred)
         loss.backward()
+
+        T.nn.utils.clip_grad_norm_(self.q_eval.parameters(), max_norm=1.0)
+
         self.q_eval.optimizer.step()
         self.learn_step_counter += 1
         self.decrement_epsilon()

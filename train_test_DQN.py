@@ -15,21 +15,24 @@ import numpy as np
 import os
 import random
 
+from dueling_ddqn.ReplayBuffer import ReplayMemory
 
 class PaterGenerator:
     def __init__(self):
         self.pos_to_reach = None
         self.prev_command = -1
+
     def reset(self):
         self.pos_to_reach = None
         self.prev_command = -1
+
     def patern_generator(self, action_num, ctrl, info):  # 0 no op 1 forward 2 back 3 left 4 right
         rpms = None
         if self.pos_to_reach is None:
             self.pos_to_reach = info[0].pos
         distance = np.linalg.norm(info[0].pos - self.pos_to_reach)
         if action_num == 0:  # 0 no op
-            if distance > 1 and self.prev_command!=0:
+            if distance > 1 and self.prev_command != 0:
                 self.pos_to_reach = [info[0].pos[0], info[0].pos[1], self.pos_to_reach[2]]
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
@@ -40,7 +43,7 @@ class PaterGenerator:
             )
         elif action_num == 1:  # 1 forward
             if distance < 1:
-                self.pos_to_reach = [self.pos_to_reach[0], self.pos_to_reach[1] +1, self.pos_to_reach[2]]
+                self.pos_to_reach = [self.pos_to_reach[0], self.pos_to_reach[1] + 1, self.pos_to_reach[2]]
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=info[0],
@@ -50,7 +53,7 @@ class PaterGenerator:
             )
         elif action_num == 2:  # 2 back
             if distance < 1:
-                self.pos_to_reach = [info[0].pos[0], info[0].pos[1] -1, self.pos_to_reach[2]]
+                self.pos_to_reach = [info[0].pos[0], info[0].pos[1] - 1, self.pos_to_reach[2]]
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=info[0],
@@ -60,7 +63,7 @@ class PaterGenerator:
             )
         elif action_num == 3:  # 3 left
             if distance < 1:
-                self.pos_to_reach = [self.pos_to_reach[0] -1, self.pos_to_reach[1], self.pos_to_reach[2]]
+                self.pos_to_reach = [self.pos_to_reach[0] - 1, self.pos_to_reach[1], self.pos_to_reach[2]]
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=info[0],
@@ -70,7 +73,7 @@ class PaterGenerator:
             )
         elif action_num == 4:  # 4 right
             if distance < 1:
-                self.pos_to_reach = [self.pos_to_reach[0]+1, self.pos_to_reach[1], self.pos_to_reach[2]]
+                self.pos_to_reach = [self.pos_to_reach[0] + 1, self.pos_to_reach[1], self.pos_to_reach[2]]
             rpms, pos_e, _ = ctrl.compute_control_from_kinematics(
                 control_timestep=env.get_sim_time_step(),
                 kin_state=info[0],
@@ -82,45 +85,109 @@ class PaterGenerator:
         return rpms
 
 
-def fill_memory(env, dqn_agent, action_number , patergenerator):
+def fill_memory(env, dqn_agent, action_number, patergenerator):
     state = env.reset()
     patergenerator.reset();
     omegas = np.array([14300, 14300, 14300, 14300])
     next_state, reward, done, info = env.step(omegas)
     while not dqn_agent.memory.is_full():
- #       print(f'target : {env.init_target}\n'
- #             f'start : {env.start_pos}')
+        #       print(f'target : {env.init_target}\n'
+        #             f'start : {env.start_pos}')
         x_error = state[1]
         y_error = state[2]
         if abs(x_error) > abs(y_error):
-            if x_error>0:
-                action=4
+            if x_error > 0:
+                action = 4
             else:
-                action=3
+                action = 3
         else:
-            if y_error>0:
-                action=1
+            if y_error > 0:
+                action = 1
             else:
-                action=2
-        #action = random.randint(0, action_number - 1)
+                action = 2
+        # action = random.randint(0, action_number - 1)
         ##########test
         omegas = patergenerator.patern_generator(action, ctrl, info)
         ##########
         next_state, reward, done, info = env.step(omegas)
-
-
         dqn_agent.store_transition(state=state,
-                               action=action,
-                               reward=reward,
-                               state_=next_state,
-                               done=done)
+                                   action=action,
+                                   reward=reward,
+                                   state_=next_state,
+                                   done=done)
         state = next_state
         if done:
             state = env.reset()
             patergenerator.reset()
             omegas = np.array([14300, 14300, 14300, 14300])
             next_state, reward, done, info = env.step(omegas)
-    print('...memory filled...')
+    print('...memory agent filled...')
+
+
+def fill_memory_optimal(env, replayMemory, action_number, patergenerator):
+    state = env.reset()
+    patergenerator.reset();
+    omegas = np.array([14300, 14300, 14300, 14300])
+    next_state, reward, done, info = env.step(omegas)
+    while not replayMemory.is_full():
+        #       print(f'target : {env.init_target}\n'
+        #             f'start : {env.start_pos}')
+        x_error = state[1]
+        y_error = state[2]
+        if abs(x_error) > abs(y_error):
+            if x_error > 0:
+                action = 4
+            else:
+                action = 3
+        else:
+            if y_error > 0:
+                action = 1
+            else:
+                action = 2
+        # action = random.randint(0, action_number - 1)
+        ##########test
+        omegas = patergenerator.patern_generator(action, ctrl, info)
+        ##########
+        next_state, reward, done, info = env.step(omegas)
+        replayMemory.store_transitions(state=state,
+                     action=action,
+                     reward=reward,
+                     next_state=next_state,
+                     done=done)
+        state = next_state
+        if done:
+            state = env.reset()
+            patergenerator.reset()
+            omegas = np.array([14300, 14300, 14300, 14300])
+            next_state, reward, done, info = env.step(omegas)
+    print('...memory optimal filled...')
+
+
+def fill_memory_random(env, replayMemory, action_number, patergenerator):
+    state = env.reset()
+    patergenerator.reset();
+    omegas = np.array([14300, 14300, 14300, 14300])
+    next_state, reward, done, info = env.step(omegas)
+    while not replayMemory.is_full():
+        action = random.randint(0, action_number - 1)
+        ##########test
+        omegas = patergenerator.patern_generator(action, ctrl, info)
+        ##########
+        next_state, reward, done, info = env.step(omegas)
+        replayMemory.store_transitions(state=state,
+                     action=action,
+                     reward=reward,
+                     next_state=next_state,
+                     done=done)
+        state = next_state
+        if done:
+            state = env.reset()
+            patergenerator.reset()
+            omegas = np.array([14300, 14300, 14300, 14300])
+            next_state, reward, done, info = env.step(omegas)
+    print('...memory random filled...')
+
+
 
 def make_random_pos():
     x_init = random.uniform(-10, 10)
@@ -129,13 +196,13 @@ def make_random_pos():
 
     x_target = random.uniform(-10, 10)
     y_target = random.uniform(-10, 10)
-    #z_target = random.uniform(0, 10)
+    # z_target = random.uniform(0, 10)
 
     point1 = np.array([x_init, y_init, z_init])
     point2 = np.array([x_target, y_target, z_init])
     distance = np.linalg.norm(point1 - point2)
 
-    while (distance < 2):
+    while (distance < 6):
         x_target = random.uniform(-10, 10)
         y_target = random.uniform(-10, 10)
         z_target = random.uniform(0, 10)
@@ -144,15 +211,16 @@ def make_random_pos():
     point1 = np.array([[x_init, y_init, z_init]])
     return point1, point2
 
-def save_plots(agent, name, rewards, Q_Learning_Loss, q_values,episode_mean_reward, n):
+
+def save_plots(agent, name, rewards, Q_Learning_Loss, q_values, episode_mean_reward, n):
     agent.save_models(name)
     print(f'saved {name[:-1]}.pth')
     plt.figure()  # Create a new figure for each plot
     if len(Q_Learning_Loss) >= n:
         plt.plot(range(len(q_values) - n, len(q_values)), q_values[-n:],
-                 label='Episode Q_Learning_Loss')
+                 label='Episode q_values')
     else:
-        plt.plot(range(len(q_values)), q_values, label='Episode Q_Learning_Loss')
+        plt.plot(range(len(q_values)), q_values, label='Episode q_values')
     plt.xlabel('episode')
     plt.ylabel('q_values')
     plt.legend(loc='lower left', fontsize='small')
@@ -165,11 +233,11 @@ def save_plots(agent, name, rewards, Q_Learning_Loss, q_values,episode_mean_rewa
         plt.plot(range(len(episode_mean_reward) - n, len(episode_mean_reward)), episode_mean_reward[-n:],
                  label='Episode Q_Learning_Loss')
     else:
-        plt.plot(range(len(episode_mean_reward)), episode_mean_reward, label='Episode Q_Learning_Loss')
+        plt.plot(range(len(episode_mean_reward)), episode_mean_reward, label='Episode total reward')
     plt.xlabel('episode')
-    plt.ylabel('episode_mean_reward')
+    plt.ylabel('episode_total_reward')
     plt.legend(loc='lower left', fontsize='small')
-    save_path = os.path.join(name, f'{name[-1]}_episode_mean_reward.png')
+    save_path = os.path.join(name, f'{name[-1]}_episode_total_reward.png')
     plt.savefig(save_path)
     plt.close()
 
@@ -205,11 +273,9 @@ def save_plots(agent, name, rewards, Q_Learning_Loss, q_values,episode_mean_rewa
     rewards_array = np.array(rewards)
     np.save(save_path, rewards_array)
 
-
     save_path = os.path.join(name, f'{name[-1]}_q_values_array.npy')
     q_values_array = np.array(q_values)
     np.save(save_path, q_values_array)
-
 
     save_path = os.path.join(name, f'{name[-1]}_episode_mean_reward_array.npy')
     episode_mean_reward_array = np.array(episode_mean_reward)
@@ -246,23 +312,27 @@ if __name__ == "__main__":
     ctrl = DSLPIDControl(env, pid_coeff=pid)
     patergenerator = PaterGenerator()
     load_checkpoint = False
-    agent = Agent(gamma=0.99, epsilon=1.0, lr=1e-3,
+    agent = Agent(gamma=0.1, epsilon=1.0, lr=1e-4,
                   input_dims=[state.shape[0]], n_actions=5, mem_size=50000,
-                  eps_min=0.01, batch_size=256, eps_dec=1e-5, replace=1000)
-    if load_checkpoint:
-        agent.load_models()
-    #agent.load_models("new_dqn_30_agent19")
-    #agent.load_models("best_model/dqn_model")
+                  eps_min=0.0001, batch_size=256, eps_dec=2e-5, replace=2000)
+
+    memory_random = ReplayMemory(50000, [state.shape[0]])
+    memory_optimal = ReplayMemory(50000, [state.shape[0]])
+    fill_memory_random(env , memory_random , 5 , patergenerator)
+    fill_memory_optimal(env , memory_optimal , 5 , patergenerator)
+
+    #agent.load_models("new_dqn_30_agent6")
+    # agent.load_models("best_model/dqn_model")
     rewards = []
     q_values = []
     episode_mean_reward = []
     Q_Learning_Loss = []
     best_score = -np.inf
-    #rewards = np.load('new_dqn_30_agent19/9_rewards_array.npy').tolist()
-    #Q_Learning_Loss = np.load('new_dqn_30_agent19/9_Q_Learning_Loss_array.npy').tolist()
-    #q_values = np.load('new_dqn_30_agent19/9_q_values_array.npy').tolist()
+    #rewards = np.load('new_dqn_30_agent6/6_rewards_array.npy').tolist()
+    #Q_Learning_Loss = np.load('new_dqn_30_agent6/6_Q_Learning_Loss_array.npy').tolist()
+    #q_values = np.load('new_dqn_30_agent6/6_q_values_array.npy').tolist()
     omegas = np.array([14300, 14300, 14300, 14300])
-    fill_memory(env, agent , 5 , patergenerator)
+    fill_memory(env, agent, 5, patergenerator)
     if True:
         for episode in range(5001):
 
@@ -272,42 +342,51 @@ if __name__ == "__main__":
             episode_reward = 0
             q_value = 0
             episode_Q_Learning_Loss = 0
-            step=0
+            step = 0
+            episode_Q_Learning_Loss=None
             for step in range(env.get_sim_freq() * 11):
                 action = agent.choose_action(state)
                 ####################test
-                q_value = agent.predict_q_value(state , action)
+                q_value = agent.predict_q_value(state, action)
                 omegas = patergenerator.patern_generator(action, ctrl, info)
                 #######################
 
                 state_, reward, done, info = env.step(omegas)
                 episode_reward += reward
                 agent.store_transition(state, action, reward, state_, done)
-                episode_Q_Learning_Loss = agent.learn()
-                #print(state[0])
+                episode_Q_Learning_Loss = agent.learn(memory_random , memory_optimal)
+                # print(state[0])
                 state = state_
                 if done or step == env.get_sim_freq() * 11 - 1:
                     break
             Q_Learning_Loss.append(episode_Q_Learning_Loss)
             q_values.append(q_value)
             rewards.append(reward)
-            episode_mean_reward.append(episode_reward/step)
+            episode_mean_reward.append(episode_reward)
             current_avg_score = np.mean(rewards[-30:])  # moving average of last 100 episodes
             print(f'episode : {episode} \n'
                   f'Q_Learning_Loss : {episode_Q_Learning_Loss}\n'
                   f'q_values : {q_value}\n'
                   f'reward : {reward}\n'
-                  f'episode_mean_reward : {episode_reward/step}\n'
+                  f'episode_mean_reward : {episode_reward}\n'
                   f'mean reward : {current_avg_score}\n'
+                  f'best_score : {best_score}\n'
+                  f'epsilon : {agent.epsilon}\n'
                   f'---------------------------------------------')
 
             if (episode + 1) % 30 == 0:
                 print(f'./new save dqn_30_agent{(episode + 1) // 30}.pth')
-                save_plots(agent, f'./new_dqn_30_agent{(episode + 1) // 30}', rewards, Q_Learning_Loss ,q_values , episode_mean_reward , 31)
-                agent.reset_memory()
-                fill_memory(env, agent, 5, patergenerator)
+                save_plots(agent, f'./new_dqn_30_agent{(episode + 1) // 30}', rewards, Q_Learning_Loss, q_values,
+                           episode_mean_reward, 31)
+                memory_random.reset()
+                memory_optimal.reset()
+
+                fill_memory_random(env, memory_random, 5, patergenerator)
+                fill_memory_optimal(env, memory_optimal, 5, patergenerator)
+
             if (episode + 1) % 100 == 0:
-                save_plots(agent , f'./new_dqn_100_agent{(episode + 1) // 100}', rewards, Q_Learning_Loss ,q_values,episode_mean_reward, 101)
+                save_plots(agent, f'./new_dqn_100_agent{(episode + 1) // 100}', rewards, Q_Learning_Loss, q_values,
+                           episode_mean_reward, 101)
 
 
             if current_avg_score >= best_score:
